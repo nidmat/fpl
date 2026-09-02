@@ -122,9 +122,9 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
         "Temperature",
         min_value=0.0,
         max_value=1.0,
-        value=0.0,
+        value=0.4,
         step=0.1,
-        help="0.0 provides strictly factual answers; higher values allow more creative wording.",
+        help="Higher values allow more creative analysis and domain-based insights.",
     )
 
     top_p = st.sidebar.slider(
@@ -138,7 +138,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
 
     st.title("🤖 FPL Data Analyst Assistant")
     st.caption(
-        f"Active Model: **{selected_model_id}** | Grounded strictly in `fpl_stats.xlsx` and `fpl_analytics.xlsx`."
+        f"Active Model: **{selected_model_id}** | Grounded in `fpl_stats.xlsx` and `fpl_analytics.xlsx` with creative analytical reasoning."
     )
 
     if not api_key:
@@ -172,7 +172,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
         with st.chat_message("user"):
             st.markdown(user_prompt)
 
-        # 2. Query Gemini with fallback handling for errors
+        # 2. Query Gemini with flexible grounding instructions
         with st.chat_message("assistant"):
             if not client:
                 error_msg = "Cannot execute request: GEMINI_API_KEY is missing."
@@ -187,14 +187,22 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                     context_data = load_all_excel_context()
 
                     system_instruction = (
-                        "You are an expert Fantasy Premier League Data Analyst.\n"
-                        "Your ONLY job is to answer the user's question using the provided Excel context.\n\n"
-                        "STRICT RULES:\n"
-                        "1. Answer ONLY using facts explicitly present in the provided context from fpl_stats.xlsx and fpl_analytics.xlsx.\n"
-                        "2. Do NOT use outside web search, external FPL knowledge, or real-world assumptions.\n"
-                        "3. If the data to answer the query is missing from the tables, reply exact words: "
-                        "'The provided spreadsheets do not contain enough data to answer this question.'\n"
-                        "4. Keep your answer clear, structured, and reference the specific tab name or numbers used."
+                        "You are an expert Fantasy Premier League (FPL) Data & Strategy Analyst.\n\n"
+                        "ANALYSIS RULES:\n"
+                        "1. Use the spreadsheet data (`fpl_stats.xlsx` and `fpl_analytics.xlsx`) as your primary ground-truth dataset.\n"
+                        "2. When a user asks for metrics that are NOT explicitly column headers in the spreadsheets (e.g., xG, xA, set-piece duties):\n"
+                        "   - Clearly state which metrics are present in the table vs. missing.\n"
+                        "   - Do NOT reject the query outright. Filter and present the best options available using the metrics present in the spreadsheet (e.g., sort by DC, baseline bonus, or threat scores).\n"
+                        "   - Supplement your analysis with tactical FPL football knowledge to explain why these players offer strong attacking or defensive potential.\n"
+                        "3. Format your output cleanly using bullet points or Markdown tables.\n\n"
+                        "EXAMPLE:\n"
+                        "User: 'Who are the top defenders with high DC and good xG?'\n"
+                        "Assistant: 'The spreadsheets provide the **DC** metric under the DEF tab, though explicit xG/xA columns are not included in this dataset. "
+                        "Here are the top defenders based on DC stats, along with their general attacking potential:\n\n"
+                        "| Player | Team | DC | Attacking Context |\n"
+                        "| --- | --- | --- | --- |\n"
+                        "| Player A | Team X | 42 | Set-piece aerial threat |\n"
+                        "| Player B | Team Y | 38 | High-volume crossing fullback |'\n"
                     )
 
                     candidate_models = [selected_model_id]
