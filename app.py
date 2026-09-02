@@ -1,4 +1,5 @@
 import os
+import time
 import pandas as pd
 import streamlit as st
 from google import genai
@@ -43,51 +44,18 @@ def load_excel_tables():
     return loaded_data
 
 
-# --- SIDEBAR MODEL CONFIGURATION ---
-st.sidebar.title("🤖 Model Configuration")
-
-MODEL_OPTIONS = {
-    "Gemini 2.5 Flash (Fast & Recommended)": "gemini-2.5-flash",
-    "Gemini 2.5 Pro (Complex Reasoning)": "gemini-2.5-pro",
-    "Gemini 2.5 Flash-Lite (Lowest Latency)": "gemini-2.5-flash-lite",
-}
-
-selected_model_label = st.sidebar.selectbox(
-    "Select Model",
-    options=list(MODEL_OPTIONS.keys()),
-    index=0,
-    help="Choose the model family best suited for your query complexity.",
+# --- TOP NAVIGATION ---
+st.session_state.active_tab = st.radio(
+    "Navigation",
+    ["📊 Spreadsheet Viewer", "💬 FPL AI Assistant"],
+    horizontal=True,
+    label_visibility="collapsed",
 )
-selected_model_id = MODEL_OPTIONS[selected_model_label]
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Hyperparameters")
-
-temperature = st.sidebar.slider(
-    "Temperature",
-    min_value=0.0,
-    max_value=1.0,
-    value=0.0,
-    step=0.1,
-    help="0.0 provides strictly factual answers; higher values allow more creative wording.",
-)
-
-top_p = st.sidebar.slider(
-    "Top-P",
-    min_value=0.0,
-    max_value=1.0,
-    value=0.95,
-    step=0.05,
-    help="Controls cumulative probability threshold for token selection.",
-)
-
-# --- TOP NAVIGATION TABS ---
-tab_data, tab_chat = st.tabs(["📊 Spreadsheet Viewer", "💬 FPL AI Assistant"])
 
 # ==============================================================================
-# TAB 1: SPREADSHEET VIEWER
+# VIEW 1: SPREADSHEET VIEWER
 # ==============================================================================
-with tab_data:
+if st.session_state.active_tab == "📊 Spreadsheet Viewer":
     st.title("⚽ FPL Spreadsheet Viewer")
     tables = load_excel_tables()
 
@@ -96,7 +64,8 @@ with tab_data:
             "Neither `fpl_stats.xlsx` nor `fpl_analytics.xlsx` was found in the project root."
         )
     else:
-        # Sidebar Sheet Selection
+        # Dynamic Sidebar Controls for Spreadsheet View
+        st.sidebar.title("📊 Spreadsheet Controls")
         selected_sheet = st.sidebar.radio(
             "Select Sheet View", list(tables.keys())
         )
@@ -104,7 +73,6 @@ with tab_data:
 
         st.subheader(f"Current Sheet: {selected_sheet}")
 
-        # Dynamic Sidebar Filters
         st.sidebar.markdown("---")
         st.sidebar.subheader("Data Filters")
         filtered_df = df.copy()
@@ -127,9 +95,47 @@ with tab_data:
         st.caption(f"Showing {len(filtered_df)} of {len(df)} total rows")
 
 # ==============================================================================
-# TAB 2: CHATGPT-STYLE AI ASSISTANT
+# VIEW 2: CHATGPT-STYLE AI ASSISTANT
 # ==============================================================================
-with tab_chat:
+elif st.session_state.active_tab == "💬 FPL AI Assistant":
+    # Dynamic Sidebar Controls for AI Assistant View
+    st.sidebar.title("🤖 Model Configuration")
+
+    MODEL_OPTIONS = {
+        "Gemini 3.6 Flash (Recommended)": "gemini-3.6-flash",
+        "Gemini 3.7 Flash (High Performance)": "gemini-3.7-flash",
+        "Gemini 3.5 Flash-Lite (Low Latency)": "gemini-3.5-flash-lite",
+    }
+
+    selected_model_label = st.sidebar.selectbox(
+        "Select Model",
+        options=list(MODEL_OPTIONS.keys()),
+        index=0,
+        help="Choose the Gemini model best suited for your query speed and reasoning needs.",
+    )
+    selected_model_id = MODEL_OPTIONS[selected_model_label]
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Hyperparameters")
+
+    temperature = st.sidebar.slider(
+        "Temperature",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.0,
+        step=0.1,
+        help="0.0 provides strictly factual answers; higher values allow more creative wording.",
+    )
+
+    top_p = st.sidebar.slider(
+        "Top-P",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.95,
+        step=0.05,
+        help="Controls cumulative probability threshold for token selection.",
+    )
+
     st.title("🤖 FPL Data Analyst Assistant")
     st.caption(
         f"Active Model: **{selected_model_id}** | Grounded strictly in `fpl_stats.xlsx` and `fpl_analytics.xlsx`."
@@ -166,7 +172,7 @@ with tab_chat:
         with st.chat_message("user"):
             st.markdown(user_prompt)
 
-        # 2. Query selected Gemini Model and stream response
+        # 2. Query Gemini with fallback handling for 503 errors
         with st.chat_message("assistant"):
             if not client:
                 error_msg = "Cannot execute request: GEMINI_API_KEY is missing."
@@ -191,32 +197,46 @@ with tab_chat:
                         "4. Keep your answer clear, structured, and reference the specific tab name or numbers used."
                     )
 
-                    try:
-                        # Request using dynamically selected model and config settings
-                        response_stream = client.models.generate_content_stream(
-                            model=selected_model_id,
-                            contents=f"SPREADSHEET DATA:\n{context_data}\n\nUSER QUESTION:\n{user_prompt}",
-                            config=types.GenerateContentConfig(
-                                system_instruction=system_instruction,
-                                temperature=temperature,
-                                top_p=top_p,
-                            ),
-                        )
+                    candidate_models = [selected_model_id]
+                    for fallback in ["gemini-3.6-flash", "gemini-3.5-flash-lite"]:
+                        if fallback not in candidate_models:
+                            candidate_models.append(fallback)
 
-                        # Helper generator to render streaming text
+                    response_stream = None
+                    last_error = None
+
+                    for model_id in candidate_models:
+                        try:
+                            response_stream = client.models.generate_content_stream(
+                                model=model_id,
+                                contents=f"SPREADSHEET DATA:\n{context_data}\n\nUSER QUESTION:\n{user_prompt}",
+                                config=types.GenerateContentConfig(
+                                    system_instruction=system_instruction,
+                                    temperature=temperature,
+                                    top_p=top_p,
+                                ),
+                            )
+                            break
+                        except Exception as e:
+                            last_error = e
+                            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                                time.sleep(1)
+                                continue
+                            else:
+                                raise e
+
+                    if response_stream:
                         def stream_text():
                             for chunk in response_stream:
                                 yield chunk.text
 
                         full_response = st.write_stream(stream_text)
 
-                        # Store assistant response in session memory
                         st.session_state.messages.append(
                             {"role": "assistant", "content": full_response}
                         )
-
-                    except Exception as e:
-                        err_text = f"An error occurred while querying Gemini ({selected_model_id}): {e}"
+                    else:
+                        err_text = f"Google Gemini servers are under heavy load. Details: {last_error}"
                         st.error(err_text)
                         st.session_state.messages.append(
                             {"role": "assistant", "content": err_text}
