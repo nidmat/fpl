@@ -129,7 +129,7 @@ with tab_chat:
                     try:
                         # Request using gemini-2.5-flash
                         response_stream = client.models.generate_content_stream(
-                            model="gemini-2.5-flash",
+                            model="gemini-3.6-flash",
                             contents=f"SPREADSHEET DATA:\n{context_data}\n\nUSER QUESTION:\n{user_prompt}",
                             config=types.GenerateContentConfig(
                                 system_instruction=system_instruction,
