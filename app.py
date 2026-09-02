@@ -3,7 +3,7 @@ import time
 import pandas as pd
 import streamlit as st
 from google import genai
-from google.genai import types
+from google.genai import types, errors
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -103,7 +103,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
 
     MODEL_OPTIONS = {
         "Gemini 3.6 Flash (Recommended)": "gemini-3.6-flash",
-        "Gemini 3.7 Flash (High Performance)": "gemini-3.7-flash",
+        "Gemini 3.6 Pro (High Performance)": "gemini-3.6-pro",
         "Gemini 3.5 Flash-Lite (Low Latency)": "gemini-3.5-flash-lite",
     }
 
@@ -172,7 +172,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
         with st.chat_message("user"):
             st.markdown(user_prompt)
 
-        # 2. Query Gemini with fallback handling for 503 errors
+        # 2. Query Gemini with fallback handling for errors
         with st.chat_message("assistant"):
             if not client:
                 error_msg = "Cannot execute request: GEMINI_API_KEY is missing."
@@ -198,11 +198,11 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                     )
 
                     candidate_models = [selected_model_id]
-                    for fallback in ["gemini-3.6-flash", "gemini-3.5-flash-lite"]:
+                    for fallback in ["gemini-3.6-flash", "gemini-3.6-pro", "gemini-3.5-flash-lite"]:
                         if fallback not in candidate_models:
                             candidate_models.append(fallback)
 
-                    response_stream = None
+                    chunks = []
                     last_error = None
 
                     for model_id in candidate_models:
@@ -216,27 +216,33 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                                     top_p=top_p,
                                 ),
                             )
-                            break
-                        except Exception as e:
-                            last_error = e
-                            if "503" in str(e) or "UNAVAILABLE" in str(e):
-                                time.sleep(1)
-                                continue
-                            else:
-                                raise e
 
-                    if response_stream:
-                        def stream_text():
+                            # Consume stream immediately inside try block to trigger network errors
+                            chunks = []
                             for chunk in response_stream:
-                                yield chunk.text
+                                if chunk.text:
+                                    chunks.append(chunk.text)
 
-                        full_response = st.write_stream(stream_text)
+                            if chunks:
+                                break
+
+                        except (errors.APIError, Exception) as e:
+                            last_error = e
+                            time.sleep(1)
+                            continue
+
+                    if chunks:
+                        def chunk_generator():
+                            for c in chunks:
+                                yield c
+
+                        full_response = st.write_stream(chunk_generator())
 
                         st.session_state.messages.append(
                             {"role": "assistant", "content": full_response}
                         )
                     else:
-                        err_text = f"Google Gemini servers are under heavy load. Details: {last_error}"
+                        err_text = f"Unable to reach Gemini models. Details: {last_error}"
                         st.error(err_text)
                         st.session_state.messages.append(
                             {"role": "assistant", "content": err_text}
