@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import pandas as pd
 import streamlit as st
@@ -15,20 +16,81 @@ api_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
 client = genai.Client(api_key=api_key) if api_key else None
 
 
-# Helper function to read Excel files and compile Markdown context for Gemini
+# Essential analytical columns across Gameweeks to minimize token bloat
+ESSENTIAL_COLS = [
+    "name", "web_name", "element_type", "position", "team", 
+    "now_cost", "DC", "selected_by_percent", "total_points", 
+    "minutes", "goals_scored", "assists", "clean_sheets", "bonus", "xG", "xA"
+]
+
+
+# Helper function to load datasets as structured JSON sections
 @st.cache_data
 def load_all_excel_context():
     files = ["fpl_stats.xlsx", "fpl_analytics.xlsx"]
-    context_str = ""
+    context_dict = {}
 
     for fname in files:
         if os.path.exists(fname):
             xl = pd.ExcelFile(fname)
             for sheet in xl.sheet_names:
                 df = xl.parse(sheet)
-                context_str += f"\n--- FILE: {fname} | TAB: {sheet} ---\n"
-                context_str += df.to_markdown(index=False) + "\n"
-    return context_str
+                
+                # Filter out 0-minute bench players to clear dead weight
+                if "minutes" in df.columns:
+                    df = df[df["minutes"] > 0]
+
+                # Retain only relevant metrics
+                cols_to_keep = [c for c in ESSENTIAL_COLS if c in df.columns]
+                if cols_to_keep:
+                    df = df[cols_to_keep]
+
+                # Store as compact JSON string
+                records = df.to_dict(orient="records")
+                context_dict[f"FILE: {fname} | TAB: {sheet}"] = json.dumps(
+                    records, separators=(",", ":")
+                )
+
+    return context_dict
+
+
+# Smart router function to inject only prompt-relevant context sections
+def get_routed_context(user_prompt: str) -> str:
+    all_context = load_all_excel_context()
+    prompt_lower = user_prompt.lower()
+    
+    selected_sections = []
+    
+    # Identify target position or query focus
+    is_mid = any(k in prompt_lower for k in ["mid", "midfielder", "wing"])
+    is_def = any(k in prompt_lower for k in ["def", "defender", "back", "cb", "lb", "rb"])
+    is_fwd = any(k in prompt_lower for k in ["fwd", "forward", "striker", "att"])
+    is_gk = any(k in prompt_lower for k in ["gk", "keeper", "goalkeeper"])
+
+    has_specific_filter = is_mid or is_def or is_fwd or is_gk
+
+    for key, json_data in all_context.items():
+        key_lower = key.lower()
+
+        if has_specific_filter:
+            # Match specific position tabs
+            if is_mid and ("mid" in key_lower or "stats" in key_lower):
+                selected_sections.append(f"--- {key} ---\n{json_data}")
+            elif is_def and ("def" in key_lower or "stats" in key_lower):
+                selected_sections.append(f"--- {key} ---\n{json_data}")
+            elif is_fwd and ("fwd" in key_lower or "stats" in key_lower):
+                selected_sections.append(f"--- {key} ---\n{json_data}")
+            elif is_gk and ("gk" in key_lower or "stats" in key_lower):
+                selected_sections.append(f"--- {key} ---\n{json_data}")
+        else:
+            # Fallback for general queries: include all loaded sections
+            selected_sections.append(f"--- {key} ---\n{json_data}")
+
+    # Fallback safety if filtering yields no matches
+    if not selected_sections:
+        selected_sections = [f"--- {k} ---\n{v}" for k, v in all_context.items()]
+
+    return "\n\n".join(selected_sections)
 
 
 # Helper function to load dataset dictionary for the UI spreadsheet viewer
@@ -64,7 +126,6 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             "Neither `fpl_stats.xlsx` nor `fpl_analytics.xlsx` was found in the project root."
         )
     else:
-        # Dynamic Sidebar Controls for Spreadsheet View
         st.sidebar.title("📊 Spreadsheet Controls")
         selected_sheet = st.sidebar.radio(
             "Select Sheet View", list(tables.keys())
@@ -88,7 +149,6 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             if selected_vals:
                 filtered_df = filtered_df[filtered_df[col].isin(selected_vals)]
 
-        # Display Interactive Grid
         st.dataframe(
             filtered_df, use_container_width=True, hide_index=True, height=600
         )
@@ -98,7 +158,6 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
 # VIEW 2: CHATGPT-STYLE AI ASSISTANT
 # ==============================================================================
 elif st.session_state.active_tab == "💬 FPL AI Assistant":
-    # Dynamic Sidebar Controls for AI Assistant View
     st.sidebar.title("🤖 Model Configuration")
 
     MODEL_OPTIONS = {
@@ -138,7 +197,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
 
     st.title("🤖 FPL Data Analyst Assistant")
     st.caption(
-        f"Active Model: **{selected_model_id}** | Grounded in `fpl_stats.xlsx` and `fpl_analytics.xlsx` with creative analytical reasoning."
+        f"Active Model: **{selected_model_id}** | Token-optimized JSON context with dynamic tab routing."
     )
 
     if not api_key:
@@ -146,7 +205,6 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
             "⚠️ `GEMINI_API_KEY` is not configured. Please add it to your Streamlit secrets or environment variables."
         )
 
-    # Initialize Persistent Session Chat History
     if "messages" not in st.session_state:
         st.session_state.messages = [
             {
@@ -155,24 +213,19 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
             }
         ]
 
-    # Render Historical Messages
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Chat Input Box at Bottom
     if user_prompt := st.chat_input(
         "e.g., Which midfielder has the best DC potential in fpl_analytics?"
     ):
-
-        # 1. Render and store user message
         st.session_state.messages.append(
             {"role": "user", "content": user_prompt}
         )
         with st.chat_message("user"):
             st.markdown(user_prompt)
 
-        # 2. Query Gemini with flexible grounding instructions
         with st.chat_message("assistant"):
             if not client:
                 error_msg = "Cannot execute request: GEMINI_API_KEY is missing."
@@ -182,27 +235,20 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                 )
             else:
                 with st.spinner(
-                    f"Analyzing spreadsheet data via `{selected_model_id}`..."
+                    f"Analyzing routed data via `{selected_model_id}`..."
                 ):
-                    context_data = load_all_excel_context()
+                    # Route and isolate essential context for query
+                    context_data = get_routed_context(user_prompt)
 
                     system_instruction = (
                         "You are an expert Fantasy Premier League (FPL) Data & Strategy Analyst.\n\n"
                         "ANALYSIS RULES:\n"
-                        "1. Use the spreadsheet data (`fpl_stats.xlsx` and `fpl_analytics.xlsx`) as your primary ground-truth dataset.\n"
-                        "2. When a user asks for metrics that are NOT explicitly column headers in the spreadsheets (e.g., xG, xA, set-piece duties):\n"
+                        "1. Use the provided JSON spreadsheet data (`fpl_stats.xlsx` and `fpl_analytics.xlsx`) as your primary ground-truth dataset.\n"
+                        "2. When a user asks for metrics that are NOT explicitly present in the data (e.g., xG, xA, set-piece duties):\n"
                         "   - Clearly state which metrics are present in the table vs. missing.\n"
-                        "   - Do NOT reject the query outright. Filter and present the best options available using the metrics present in the spreadsheet (e.g., sort by DC, baseline bonus, or threat scores).\n"
-                        "   - Supplement your analysis with tactical FPL football knowledge to explain why these players offer strong attacking or defensive potential.\n"
-                        "3. Format your output cleanly using bullet points or Markdown tables.\n\n"
-                        "EXAMPLE:\n"
-                        "User: 'Who are the top defenders with high DC and good xG?'\n"
-                        "Assistant: 'The spreadsheets provide the **DC** metric under the DEF tab, though explicit xG/xA columns are not included in this dataset. "
-                        "Here are the top defenders based on DC stats, along with their general attacking potential:\n\n"
-                        "| Player | Team | DC | Attacking Context |\n"
-                        "| --- | --- | --- | --- |\n"
-                        "| Player A | Team X | 42 | Set-piece aerial threat |\n"
-                        "| Player B | Team Y | 38 | High-volume crossing fullback |'\n"
+                        "   - Present the best options available using available metrics (e.g., sort by DC, baseline bonus, or points).\n"
+                        "   - Supplement your analysis with tactical FPL football knowledge to explain potential upside.\n"
+                        "3. Format your output cleanly using bullet points or Markdown tables.\n"
                     )
 
                     candidate_models = [selected_model_id]
@@ -217,7 +263,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                         try:
                             response_stream = client.models.generate_content_stream(
                                 model=model_id,
-                                contents=f"SPREADSHEET DATA:\n{context_data}\n\nUSER QUESTION:\n{user_prompt}",
+                                contents=f"SPREADSHEET DATA (JSON):\n{context_data}\n\nUSER QUESTION:\n{user_prompt}",
                                 config=types.GenerateContentConfig(
                                     system_instruction=system_instruction,
                                     temperature=temperature,
@@ -225,7 +271,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                                 ),
                             )
 
-                            # Consume stream immediately inside try block to trigger network errors
+                            # Consume stream immediately to catch exceptions
                             chunks = []
                             for chunk in response_stream:
                                 if chunk.text:
@@ -254,4 +300,5 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                         st.error(err_text)
                         st.session_state.messages.append(
                             {"role": "assistant", "content": err_text}
-                        )
+        )
+        
