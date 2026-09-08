@@ -160,19 +160,13 @@ def format_percentage_column(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # Attaches positional rank ticker superscript string to numerical metric cells
-# EXCLUSIVELY skips column index 0 (first column) and non-numeric columns
 def add_rank_tickers(df: pd.DataFrame) -> pd.DataFrame:
     df_ranked = df.copy()
 
     # Exclude non-metric or identification columns from ranking
     skip_cols = ["id", "code", "element", "team", "position", "element_type"]
 
-    for col_idx, col in enumerate(df_ranked.columns):
-        # Rule 1: Always skip the first column (Index 0)
-        if col_idx == 0:
-            continue
-
-        # Rule 2: Skip explicitly identified metadata columns
+    for col in df_ranked.columns:
         if col.lower() in skip_cols:
             continue
 
@@ -261,15 +255,18 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             else {}
         )
 
-        # Apply rank tickers EXCLUSIVELY to fpl_analytics.xlsx
-        is_fpl_analytics_file = "fpl_analytics.xlsx" in selected_workbook
+        # Target specific positional sheets to attach rank tickers
+        position_sheets = ["GK", "DEF", "MID", "FWD", "Defense", "Attack"]
+        is_position_sheet = any(
+            p.lower() in selected_sheet.lower() for p in position_sheets
+        )
 
-        if is_fpl_analytics_file:
+        if is_position_sheet:
             display_df = add_rank_tickers(filtered_df)
         else:
             display_df = filtered_df.copy()
 
-        # Restrict cell background styling EXCLUSIVELY to fpl_stats.xlsx
+        # Restrict cell background styling EXCLUSIVELY to fpl_stats.xlsx and specified tabs
         is_fpl_stats_file = "fpl_stats.xlsx" in selected_workbook
         
         target_sheets = [
