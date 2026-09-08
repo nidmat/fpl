@@ -513,4 +513,28 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                                 ),
                             )
 
-                            def stream_generat
+                            def stream_generator():
+                                for chunk in response_stream:
+                                    if chunk.text:
+                                        yield chunk.text
+
+                            full_response = st.write_stream(stream_generator())
+
+                            # Append user message and assistant response to history
+                            all_threads[selected_thread].append({"role": "user", "content": user_prompt})
+                            all_threads[selected_thread].append({"role": "assistant", "content": full_response})
+                            save_all_threads(all_threads)
+                            render_copy_button(full_response, f"live_{time.time()}")
+
+                            last_error = None
+                            break
+                        except Exception as e:
+                            last_error = e
+                            continue
+
+                    if last_error is not None:
+                        error_msg = f"Unable to reach Gemini models. Error: {last_error}"
+                        st.error(error_msg)
+                        all_threads[selected_thread].append({"role": "user", "content": user_prompt})
+                        all_threads[selected_thread].append({"role": "assistant", "content": error_msg})
+                        save_all_threads(all_threads)
