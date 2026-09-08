@@ -505,12 +505,13 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                     chunks = []
                     last_error = None
 
+                    prompt_payload = "SPREADSHEET DATA (JSON):\n" + str(context_data) + "\n\nUSER QUESTION:\n" + str(user_prompt)
+
                     for model_id in candidate_models:
                         try:
-                            prompt_content = f"SPREADSHEET DATA (JSON):\n{context_data}\n\nUSER QUESTION:\n{user_prompt}"
-                            response_stream = client.models.generate_content_stream(
-                                model=model_id,
-                                contents=prompt_content,
-                                config=types.GenerateContentConfig(
-                                    system_instruction=system_instruction,
-      
+                            config_obj = types.GenerateContentConfig(
+                                system_instruction=system_instruction,
+                                temperature=temperature,
+                                top_p=top_p,
+                            )
+                            response_stream = client.mode
