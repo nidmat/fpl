@@ -504,7 +504,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                             for c in chunks:
                                 yield c
 
-                        full_response = st.write_stream(chunk_generator())
+                        full_response = st.write_stream(chunk_generator)
 
                         all_threads[selected_thread].append(
-   
+     
