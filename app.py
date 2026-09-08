@@ -499,7 +499,6 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                         if fallback not in candidate_models:
                             candidate_models.append(fallback)
 
-                    chunks = []
                     last_error = None
 
                     for model_id in candidate_models:
@@ -514,4 +513,4 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                                 ),
                             )
 
-              
+                            def stream_generat
