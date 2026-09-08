@@ -416,7 +416,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
 
     st.title("🤖 FPL Data Analyst Assistant")
     st.caption(
-        f"Active Thread: **{selected_thread}** | Token Cap: **Top 70 Players/Category** | Active Model: **{selected_model_id}**"
+        f"Active Thread: **{selected_thread}** | Active Model: **{selected_model_id}**"
     )
 
     if not api_key:
@@ -440,20 +440,30 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                 st.error("Cannot execute request: GEMINI_API_KEY is missing.")
             else:
                 with st.spinner(
-                    f"Analyzing top 70 players/category via `{selected_model_id}`..."
+                    f"Analyzing FPL data via `{selected_model_id}`..."
                 ):
                     context_data = get_routed_context(user_prompt)
 
                     system_instruction = (
                         "You are an expert Fantasy Premier League (FPL) Data & Strategy Analyst.\n\n"
-                        "ANALYSIS RULES:\n"
-                        "1. Use the provided JSON spreadsheet data (`fpl_stats.xlsx` and `fpl_analytics.xlsx`) as your primary ground-truth dataset.\n"
-                        "2. Note: Data is truncated to top 70 players per category to comply with token limits.\n"
-                        "3. When a user asks for metrics that are NOT explicitly present in the data (e.g., xG, xA, set-piece duties):\n"
-                        "   - Clearly state which metrics are present in the table vs. missing.\n"
-                        "   - Present the best options available using available metrics (e.g., sort by DC, baseline bonus, or points).\n"
-                        "   - Supplement your analysis with tactical FPL football knowledge to explain potential upside.\n"
-                        "4. Format your output cleanly using bullet points or Markdown tables.\n"
+                        "CORE DATASETS:\n"
+                        "- `fpl_analytics.xlsx`: Primary source for player, team, and fixture performance metrics.\n"
+                        "- `fpl_stats.xlsx`: Primary source for ownership statistics (Top 500k managers level).\n\n"
+                        "ROUTING & PRIORITY RULES:\n\n"
+                        "1. PLAYER & TEAM STATS QUERIES:\n"
+                        "   - Primary Source: Focus primarily on `fpl_analytics.xlsx`.\n"
+                        "   - Gameweek Weighting: Give heavy emphasis to the latest Gameweek (GW) data, but always contextualize with historical trends from previous gameweeks.\n"
+                        "   - Secondary Context: If helpful, incorporate broader team or positional stats.\n"
+                        "   - Venue Priority: Prioritize analysis in this exact order: Home Performance -> Away Performance -> Overall.\n"
+                        "   - Ownership Add-on: Use `fpl_stats.xlsx` ONLY to pull current player/team ownership percentage if relevant.\n\n"
+                        "2. OWNERSHIP & POPULARITY QUERIES:\n"
+                        "   - Primary Source: Focus primarily on `fpl_stats.xlsx` for player and team-level ownership.\n"
+                        "   - Analytics Add-on: Dip into `fpl_analytics.xlsx` secondarily to support ownership trends with performance metrics.\n"
+                        "   - Ownership Benchmark: Explicitly state in your response that all ownership stats represent 'Top 500k Ownership' whenever ownership percentages are mentioned.\n\n"
+                        "3. MISSING METRICS & FORMATTING:\n"
+                        "   - If a requested metric (e.g., xG, xA, set-pieces) is missing from the data, explicitly state what is available vs. missing.\n"
+                        "   - Supplement gaps with expert FPL tactical context.\n"
+                        "   - Present comparisons using clean Markdown tables, concise bullet points, or bold headers.\n"
                     )
 
                     candidate_models = [selected_model_id]
@@ -497,15 +507,4 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                         full_response = st.write_stream(chunk_generator())
 
                         all_threads[selected_thread].append(
-                            {"role": "user", "content": user_prompt}
-                        )
-                        all_threads[selected_thread].append(
-                            {"role": "assistant", "content": full_response}
-                        )
-                        save_all_threads(all_threads)
-
-                    else:
-                        st.error(
-                            f"⚠️ Request failed due to API rate limits or model errors (429/503). Details: {last_error}"
-    )
-                        
+   
