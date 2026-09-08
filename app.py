@@ -177,10 +177,13 @@ def load_excel_tables():
     loaded_data = {}
     for label, fname in files.items():
         if os.path.exists(fname):
-            xl = pd.ExcelFile(fname)
-            loaded_data[label] = {
-                sheet: xl.parse(sheet) for sheet in xl.sheet_names
-            }
+            try:
+                xl = pd.ExcelFile(fname)
+                loaded_data[label] = {
+                    sheet: xl.parse(sheet) for sheet in xl.sheet_names
+                }
+            except Exception as e:
+                st.error(f"Error loading {fname}: {e}")
     return loaded_data
 
 
@@ -510,8 +513,4 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                                 config=types.GenerateContentConfig(
                                     system_instruction=system_instruction,
                                     temperature=temperature,
-                                    top_p=top_p,
-                                ),
-                            )
-
-              
+     
