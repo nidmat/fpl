@@ -6,6 +6,14 @@ import streamlit as st
 from google import genai
 from google.genai import types, errors
 
+# Standard copy button fallback handler
+try:
+    from st_copy_button import st_copy_button
+    HAS_ST_COPY = True
+except ImportError:
+    HAS_ST_COPY = False
+
+
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="FPL Analytics & AI Chat", page_icon="⚽", layout="wide"
@@ -35,7 +43,7 @@ def load_all_threads() -> dict[str, list[dict]]:
         "General FPL Chat": [
             {
                 "role": "assistant",
-                "content": "Hello! I am your shared FPL data agent. All completed chats here are saved and visible to all users. Select or create a thread in the sidebar to get started!",
+                "content": "Hello! I am your shared FPL data agent. Select or create a thread in the sidebar to get started!",
             }
         ]
     }
@@ -70,7 +78,7 @@ def save_all_threads(threads: dict[str, list[dict]]):
 ESSENTIAL_COLS = [
     "name", "web_name", "element_type", "position", "team", 
     "now_cost", "DC", "selected_by_percent", "total_points", 
-    "minutes", "goals_scored", "assists", "clean_sheets", "bonus", "xG", "xA"
+    "minutes", "goals_scored", "assists", "clean_sheets", "goals_conceded", "bonus", "xG", "xA"
 ]
 
 
@@ -138,6 +146,15 @@ def get_routed_context(user_prompt: str) -> str:
             elif is_def and ("def" in key_lower or "stats" in key_lower):
                 selected_sections.append(f"--- {key} ---\n{json_data}")
             elif is_fwd and ("fwd" in key_lower or "stats" in key_lower):
+                # Clean DC metrics from FWD json data payload if evaluating FWD specific sheet
+                if "fwd" in key_lower:
+                    try:
+                        fwd_records = json.loads(json_data)
+                        for r in fwd_records:
+                            r.pop("DC", None)
+                        json_data = json.dumps(fwd_records, separators=(",", ":"))
+                    except Exception:
+                        pass
                 selected_sections.append(f"--- {key} ---\n{json_data}")
             elif is_gk and ("gk" in key_lower or "stats" in key_lower):
                 selected_sections.append(f"--- {key} ---\n{json_data}")
@@ -213,6 +230,22 @@ def format_percentage_column(df: pd.DataFrame) -> pd.DataFrame:
             if pd.api.types.is_numeric_dtype(df_clean[col]):
                 df_clean[col] = df_clean[col].round(2)
     return df_clean
+
+
+# Helper to render copy button for text
+def render_copy_button(text_to_copy: str, key_suffix: str):
+    if HAS_ST_COPY:
+        st_copy_button(
+            text=text_to_copy,
+            before_copy_label="📋 Copy Output",
+            after_copy_label="✅ Copied!",
+            key=f"copy_{key_suffix}",
+        )
+    else:
+        # Fallback copy mechanism using code box or native button toast
+        if st.button("📋 Copy Text", key=f"btn_copy_{key_suffix}"):
+            st.toast("Response text ready! Select and copy from the code section below.")
+            st.code(text_to_copy, language=None)
 
 
 # --- TOP NAVIGATION ---
@@ -331,7 +364,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
 
     # --- CREATE NEW THREAD CONTROL ---
     with st.sidebar.expander("➕ Create New Chat Thread", expanded=False):
-        new_thread_name = st.text_input("Thread Topic Name", placeholder="e.g., GW5 Captaincy & Wildcard")
+        new_thread_name = st.text_input("Thread Topic Name", placeholder="e.g., GW5 FWD Analysis")
         if st.button("Create Thread", use_container_width=True):
             if new_thread_name.strip():
                 clean_name = new_thread_name.strip()
@@ -339,7 +372,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                     all_threads[clean_name] = [
                         {
                             "role": "assistant",
-                            "content": f"Started thread: **{clean_name}**. Ask any questions regarding your FPL spreadsheets!",
+                            "content": f"Started thread: **{clean_name}**. Ask any concise, stat-driven questions!",
                         }
                     ]
                     save_all_threads(all_threads)
@@ -385,7 +418,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
         "Temperature",
         min_value=0.0,
         max_value=1.0,
-        value=0.4,
+        value=0.2,
         step=0.1,
     )
 
@@ -393,7 +426,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
         "Top-P",
         min_value=0.0,
         max_value=1.0,
-        value=0.95,
+        value=0.9,
         step=0.05,
     )
 
@@ -425,9 +458,11 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
         )
 
     current_thread_messages = all_threads.get(selected_thread, [])
-    for msg in current_thread_messages:
+    for idx, msg in enumerate(current_thread_messages):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            if msg["role"] == "assistant":
+                render_copy_button(msg["content"], f"hist_{idx}")
 
     if user_prompt := st.chat_input(
         f"Ask a question in '{selected_thread}'..."
@@ -445,25 +480,18 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                     context_data = get_routed_context(user_prompt)
 
                     system_instruction = (
-                        "You are an expert Fantasy Premier League (FPL) Data & Strategy Analyst.\n\n"
-                        "CORE DATASETS:\n"
-                        "- `fpl_analytics.xlsx`: Primary source for player, team, and fixture performance metrics.\n"
-                        "- `fpl_stats.xlsx`: Primary source for ownership statistics (Top 500k managers level).\n\n"
-                        "ROUTING & PRIORITY RULES:\n\n"
-                        "1. PLAYER & TEAM STATS QUERIES:\n"
-                        "   - Primary Source: Focus primarily on `fpl_analytics.xlsx`.\n"
-                        "   - Gameweek Weighting: Give heavy emphasis to the latest Gameweek (GW) data, but always contextualize with historical trends from previous gameweeks.\n"
-                        "   - Secondary Context: If helpful, incorporate broader team or positional stats.\n"
-                        "   - Venue Priority: Prioritize analysis in this exact order: Home Performance -> Away Performance -> Overall.\n"
-                        "   - Ownership Add-on: Use `fpl_stats.xlsx` ONLY to pull current player/team ownership percentage if relevant.\n\n"
-                        "2. OWNERSHIP & POPULARITY QUERIES:\n"
-                        "   - Primary Source: Focus primarily on `fpl_stats.xlsx` for player and team-level ownership.\n"
-                        "   - Analytics Add-on: Dip into `fpl_analytics.xlsx` secondarily to support ownership trends with performance metrics.\n"
-                        "   - Ownership Benchmark: Explicitly state in your response that all ownership stats represent 'Top 500k Ownership' whenever ownership percentages are mentioned.\n\n"
-                        "3. MISSING METRICS & FORMATTING:\n"
-                        "   - If a requested metric (e.g., xG, xA, set-pieces) is missing from the data, explicitly state what is available vs. missing.\n"
-                        "   - Supplement gaps with expert FPL tactical context.\n"
-                        "   - Present comparisons using clean Markdown tables, concise bullet points, or bold headers.\n"
+                        "You are a strict, stat-oriented Fantasy Premier League (FPL) Data Analyst.\n\n"
+                        "FORMAT & OUTPUT REQUIREMENTS:\n"
+                        "1. CONCISE & CHAT-SHAREABLE: Minimize fluff/filler text. Structure output cleanly with emojis and concise bullet points so users can easily copy-paste into social chats (e.g. WhatsApp, Discord).\n"
+                        "2. EMPHASIS ON #1 OPTION: Always crown the unambiguous #1 standout option first with an explicit title, followed by their full metric breakdown.\n"
+                        "3. TABLES FOR DATA: Back up every claim with Markdown tables containing exact stats.\n"
+                        "4. SINGLE-LINE TEAM SUMMARIES: Consolidate team-level analysis into brief 1-line bullet summaries.\n\n"
+                        "POSITION-SPECIFIC METRIC SELECTION (FROM ANALYTICS DATASET):\n"
+                        "- FORWARDS (FWD): Focus strictly on `xG`, `xA`, `goals_scored`, `assists`, `total_points`, and `bonus`. (Do NOT use or mention `DC` for Forwards).\n"
+                        "- MIDFIELDERS (MID): Focus heavily on `xG`, `xA`, `goals_scored`, `assists`, `DC`, `total_points`, and `bonus`.\n"
+                        "- DEFENDERS (DEF) & GOALKEEPERS (GK): Focus heavily on `total_points`, `clean_sheets` (cs), `goals_conceded` (gc), `DC`, and `bonus`. (Note: `goals_scored` & `assists` are strictly tiebreakers).\n\n"
+                        "OWNERSHIP DATA (FROM STATS DATASET):\n"
+                        "- Explicitly label ownership values as 'Top 500k Ownership'. Highlight % ownership changes across Gameweeks.\n"
                     )
 
                     candidate_models = [selected_model_id]
@@ -486,35 +514,4 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                                 ),
                             )
 
-                            chunks = []
-                            for chunk in response_stream:
-                                if chunk.text:
-                                    chunks.append(chunk.text)
-
-                            if chunks:
-                                break
-
-                        except (errors.APIError, Exception) as e:
-                            last_error = e
-                            time.sleep(3)  # Cooldown delay before trying next fallback model
-                            continue
-
-                    if chunks:
-                        def chunk_generator():
-                            for c in chunks:
-                                yield c
-
-                        full_response = st.write_stream(chunk_generator())
-
-                        all_threads[selected_thread].append(
-                            {"role": "user", "content": user_prompt}
-                        )
-                        all_threads[selected_thread].append(
-                            {"role": "assistant", "content": full_response}
-                        )
-                        save_all_threads(all_threads)
-
-                    else:
-                        st.error(
-                            f"⚠️ Request failed due to API rate limits or model errors (429/503). Details: {last_error}"
-                        )
+              
