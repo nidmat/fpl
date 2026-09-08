@@ -200,7 +200,9 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             else {}
         )
 
-        # Apply cell styling for specified position and ownership sheets
+        # Restrict cell styling EXCLUSIVELY to fpl_stats.xlsx and specified tabs
+        is_fpl_stats_file = "fpl_stats.xlsx" in selected_workbook
+        
         target_sheets = [
             "GK", "DEF", "MID", "FWD", "Defense", "Attack", "player ownership"
         ]
@@ -208,14 +210,15 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             t.lower() in selected_sheet.lower() for t in target_sheets
         )
 
-        if is_target_sheet:
+        if is_fpl_stats_file and is_target_sheet:
             gw_cols = [
                 c for c in filtered_df.columns 
                 if "gw" in c.lower() or "ownership" in c.lower() or "selected" in c.lower()
             ]
             
             if gw_cols:
-                styled_df = filtered_df.style.applymap(
+                # Use .map() to remain compatible with Pandas 2.1.0+ Styler API
+                styled_df = filtered_df.style.map(
                     style_ownership, subset=gw_cols
                 )
             else:
