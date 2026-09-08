@@ -1,6 +1,7 @@
 import os
 import json
 import time
+from datetime import datetime
 import pandas as pd
 import streamlit as st
 from google import genai
@@ -8,12 +9,62 @@ from google.genai import types, errors
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="FPL Analytics & AI Chat", page_icon="⚽", layout="wide"
+    page_title="FPL Analytics & Multi-Chat AI Agent", page_icon="⚽", layout="wide"
 )
 
 # Initialize Gemini Client (Reads key from Streamlit Secrets or Environment Variable)
 api_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
 client = genai.Client(api_key=api_key) if api_key else None
+
+SHARED_CHAT_FILE = "all_chat_threads.json"
+
+
+# --- MULTI-THREAD SHARED PERSISTENCE HELPERS ---
+def load_all_threads() -> dict[str, list[dict]]:
+    """Loads all shared chat threads from disk."""
+    if os.path.exists(SHARED_CHAT_FILE):
+        try:
+            with open(SHARED_CHAT_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and data:
+                    return data
+        except Exception:
+            pass
+    
+    # Default initial thread if file is missing or empty
+    return {
+        "General FPL Chat": [
+            {
+                "role": "assistant",
+                "content": "Hello! I am your shared FPL data agent. All completed chats here are saved and visible to all users. Select or create a thread in the sidebar to get started!",
+            }
+        ]
+    }
+
+
+def save_all_threads(threads: dict[str, list[dict]]):
+    """Persists all threads to disk, strictly filtering out error messages."""
+    valid_threads = {}
+    error_keywords = [
+        "429", "503", "ResourceExhausted", "APIError", 
+        "Unable to reach Gemini models", "GEMINI_API_KEY is missing",
+        "quota", "rate limit"
+    ]
+
+    for thread_name, messages in threads.items():
+        clean_messages = []
+        for msg in messages:
+            content = str(msg.get("content", ""))
+            is_error = any(err.lower() in content.lower() for err in error_keywords)
+            if not is_error:
+                clean_messages.append(msg)
+        valid_threads[thread_name] = clean_messages
+
+    try:
+        with open(SHARED_CHAT_FILE, "w", encoding="utf-8") as f:
+            json.dump(valid_threads, f, indent=2)
+    except Exception as e:
+        st.error(f"Failed to persist chat data: {e}")
 
 
 # Essential analytical columns across Gameweeks to minimize token bloat
@@ -24,7 +75,6 @@ ESSENTIAL_COLS = [
 ]
 
 
-# Helper function to load datasets as structured JSON sections
 @st.cache_data
 def load_all_excel_context():
     files = ["fpl_stats.xlsx", "fpl_analytics.xlsx"]
@@ -54,14 +104,12 @@ def load_all_excel_context():
     return context_dict
 
 
-# Smart router function to inject only prompt-relevant context sections
 def get_routed_context(user_prompt: str) -> str:
     all_context = load_all_excel_context()
     prompt_lower = user_prompt.lower()
     
     selected_sections = []
     
-    # Identify target position or query focus
     is_mid = any(k in prompt_lower for k in ["mid", "midfielder", "wing"])
     is_def = any(k in prompt_lower for k in ["def", "defender", "back", "cb", "lb", "rb"])
     is_fwd = any(k in prompt_lower for k in ["fwd", "forward", "striker", "att"])
@@ -90,7 +138,6 @@ def get_routed_context(user_prompt: str) -> str:
     return "\n\n".join(selected_sections)
 
 
-# Helper function to load dataset dictionary structured by file
 @st.cache_data
 def load_excel_tables():
     files = {
@@ -107,7 +154,6 @@ def load_excel_tables():
     return loaded_data
 
 
-# Style function using exclusively DARK TEXT (#000000) for high readability
 def style_ownership(val):
     if pd.isna(val):
         return ""
@@ -121,28 +167,22 @@ def style_ownership(val):
             return ""
 
     if isinstance(numeric_val, (int, float)):
-        # High growth (> 20%): Medium-Dark Green
         if numeric_val > 20:
             return "background-color: #81c784; color: #000000; font-weight: bold;"
-        # Moderate growth (10% - 20%): Soft Light Green
         elif 10 <= numeric_val <= 20:
             return "background-color: #c8e6c9; color: #000000;"
-        # Moderate drop (-5% to -20%): Light Orange
         elif -20 <= numeric_val <= -5:
             return "background-color: #ffe0b2; color: #000000;"
-        # Heavy drop (< -20%): Vibrant Orange
         elif numeric_val < -20:
             return "background-color: #ffb74d; color: #000000; font-weight: bold;"
     
     return ""
 
 
-# Clean and round percentage numbers or percentage strings to 2 decimal places
 def format_percentage_column(df: pd.DataFrame) -> pd.DataFrame:
     df_clean = df.copy()
     for col in df_clean.columns:
         if "%" in col or "percent" in col.lower():
-            # If string containing '%', strip and parse as float
             if df_clean[col].dtype == object:
                 try:
                     df_clean[col] = (
@@ -155,7 +195,6 @@ def format_percentage_column(df: pd.DataFrame) -> pd.DataFrame:
                 except Exception:
                     pass
 
-            # Round numeric percentage series to 2 decimal places
             if pd.api.types.is_numeric_dtype(df_clean[col]):
                 df_clean[col] = df_clean[col].round(2)
     return df_clean
@@ -183,7 +222,6 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
     else:
         st.sidebar.title("📊 File & Sheet Controls")
         
-        # Radio button 1: Choose the Workbook
         selected_workbook = st.sidebar.radio(
             "Select Excel File",
             options=list(workbooks.keys()),
@@ -191,7 +229,6 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
         
         available_sheets = list(workbooks[selected_workbook].keys())
 
-        # Radio button 2: Choose the Sheet within the selected Workbook
         selected_sheet = st.sidebar.radio(
             "Select Tab / Sheet",
             options=available_sheets,
@@ -216,10 +253,8 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             if selected_vals:
                 filtered_df = filtered_df[filtered_df[col].isin(selected_vals)]
 
-        # Apply strict 2-decimal rounding to all percentage columns everywhere
         filtered_df = format_percentage_column(filtered_df)
 
-        # Automatically pin/freeze the first column regardless of its name
         first_col = filtered_df.columns[0] if not filtered_df.empty else None
         column_config = (
             {first_col: st.column_config.Column(pinned=True)}
@@ -227,17 +262,9 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             else {}
         )
 
-        # Configure 2 decimal places display formatting for percentage columns
-        for col in filtered_df.columns:
-            if "%" in col or "percent" in col.lower():
-                if pd.api.types.is_numeric_dtype(filtered_df[col]):
-                    column_config[col] = st.column_config.NumberColumn(
-                        col, format="%.2f"
-                    )
+        display_df = filtered_df.copy()
 
-        # Restrict cell background styling EXCLUSIVELY to fpl_stats.xlsx and specified tabs
         is_fpl_stats_file = "fpl_stats.xlsx" in selected_workbook
-        
         target_sheets = [
             "GK", "DEF", "MID", "FWD", "Defense", "Attack", "player ownership"
         ]
@@ -246,25 +273,19 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
         )
 
         if is_fpl_stats_file and is_target_sheet:
-            # Strictly target only % change / ownership change columns for background highlight
             change_cols = [
-                c for c in filtered_df.columns 
+                c for c in display_df.columns 
                 if "% change" in c.lower() or "change" in c.lower() or "diff" in c.lower()
             ]
             
             if change_cols:
-                styled_df = filtered_df.style.map(
+                styled_df = display_df.style.map(
                     style_ownership, subset=change_cols
-                ).format(
-                    "{:.2f}",
-                    subset=[
-                        c for c in change_cols if pd.api.types.is_numeric_dtype(filtered_df[c])
-                    ],
                 )
             else:
-                styled_df = filtered_df
+                styled_df = display_df
         else:
-            styled_df = filtered_df
+            styled_df = display_df
 
         st.dataframe(
             styled_df,
@@ -276,9 +297,47 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
         st.caption(f"Showing {len(filtered_df)} of {len(df)} total rows")
 
 # ==============================================================================
-# VIEW 2: CHATGPT-STYLE AI ASSISTANT
+# VIEW 2: MULTI-CHAT AGENT (SHARED ACROSS USERS)
 # ==============================================================================
 elif st.session_state.active_tab == "💬 FPL AI Assistant":
+    st.sidebar.title("💬 Shared Chat Threads")
+
+    # Load all threads from shared storage
+    all_threads = load_all_threads()
+
+    # --- CREATE NEW THREAD CONTROL ---
+    with st.sidebar.expander("➕ Create New Chat Thread", expanded=False):
+        new_thread_name = st.text_input("Thread Topic Name", placeholder="e.g., GW5 Captaincy & Wildcard")
+        if st.button("Create Thread", use_container_width=True):
+            if new_thread_name.strip():
+                clean_name = new_thread_name.strip()
+                if clean_name not in all_threads:
+                    all_threads[clean_name] = [
+                        {
+                            "role": "assistant",
+                            "content": f"Started thread: **{clean_name}**. Ask any questions regarding your FPL spreadsheets!",
+                        }
+                    ]
+                    save_all_threads(all_threads)
+                    st.session_state.active_thread = clean_name
+                    st.rerun()
+                else:
+                    st.warning("A thread with that name already exists!")
+
+    # Thread Selection Radio Box
+    thread_names = list(all_threads.keys())
+    
+    if "active_thread" not in st.session_state or st.session_state.active_thread not in thread_names:
+        st.session_state.active_thread = thread_names[0]
+
+    selected_thread = st.sidebar.radio(
+        "Select Active Thread",
+        options=thread_names,
+        index=thread_names.index(st.session_state.active_thread),
+    )
+    st.session_state.active_thread = selected_thread
+
+    st.sidebar.markdown("---")
     st.sidebar.title("🤖 Model Configuration")
 
     MODEL_OPTIONS = {
@@ -291,73 +350,54 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
         "Select Model",
         options=list(MODEL_OPTIONS.keys()),
         index=0,
-        help="Choose the Gemini model best suited for your query speed and reasoning needs.",
     )
     selected_model_id = MODEL_OPTIONS[selected_model_label]
 
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Hyperparameters")
-
     temperature = st.sidebar.slider(
-        "Temperature",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.4,
-        step=0.1,
-        help="Higher values allow more creative analysis and domain-based insights.",
+        "Temperature", min_value=0.0, max_value=1.0, value=0.4, step=0.1
+    )
+    top_p = st.sidebar.slider(
+        "Top-P", min_value=0.0, max_value=1.0, value=0.95, step=0.05
     )
 
-    top_p = st.sidebar.slider(
-        "Top-P",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.95,
-        step=0.05,
-        help="Controls cumulative probability threshold for token selection.",
-    )
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🗑️ Reset Current Thread", use_container_width=True):
+        all_threads[selected_thread] = [
+            {
+                "role": "assistant",
+                "content": f"Thread **{selected_thread}** has been reset.",
+            }
+        ]
+        save_all_threads(all_threads)
+        st.rerun()
 
     st.title("🤖 FPL Data Analyst Assistant")
     st.caption(
-        f"Active Model: **{selected_model_id}** | Token-optimized JSON context with dynamic tab routing."
+        f"Active Thread: **{selected_thread}** | Shared Multi-User History Enabled | Active Model: **{selected_model_id}**"
     )
 
     if not api_key:
-        st.warning(
-            "⚠️ `GEMINI_API_KEY` is not configured. Please add it to your Streamlit secrets or environment variables."
-        )
+        st.warning("⚠️ `GEMINI_API_KEY` is not configured. Please add it to secrets or env vars.")
 
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {
-                "role": "assistant",
-                "content": "Hello! I am your FPL data agent. Ask me anything about player ownership, positions, chips, or defensive contribution stats across your spreadsheets!",
-            }
-        ]
-
-    for msg in st.session_state.messages:
+    # Render all completed messages in the selected thread
+    current_thread_messages = all_threads.get(selected_thread, [])
+    for msg in current_thread_messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
+    # User Input & Prompt Stream
     if user_prompt := st.chat_input(
-        "e.g., Which midfielder has the best DC potential in fpl_analytics?"
+        f"Ask a question in '{selected_thread}'..."
     ):
-        st.session_state.messages.append(
-            {"role": "user", "content": user_prompt}
-        )
+        # Render user prompt in UI immediately
         with st.chat_message("user"):
             st.markdown(user_prompt)
 
         with st.chat_message("assistant"):
             if not client:
-                error_msg = "Cannot execute request: GEMINI_API_KEY is missing."
-                st.error(error_msg)
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": error_msg}
-                )
+                st.error("Cannot execute request: GEMINI_API_KEY is missing.")
             else:
-                with st.spinner(
-                    f"Analyzing routed data via `{selected_model_id}`..."
-                ):
+                with st.spinner(f"Analyzing routed data via `{selected_model_id}`..."):
                     context_data = get_routed_context(user_prompt)
 
                     system_instruction = (
@@ -404,6 +444,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                             time.sleep(1)
                             continue
 
+                    # SUCCESS: Stream output, update shared storage, and persist
                     if chunks:
                         def chunk_generator():
                             for c in chunks:
@@ -411,12 +452,17 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
 
                         full_response = st.write_stream(chunk_generator())
 
-                        st.session_state.messages.append(
+                        # Append BOTH messages to the specific thread only after successful completion
+                        all_threads[selected_thread].append(
+                            {"role": "user", "content": user_prompt}
+                        )
+                        all_threads[selected_thread].append(
                             {"role": "assistant", "content": full_response}
                         )
+                        save_all_threads(all_threads)
+
+                    # FAILURE: Show temporary alert without polluting thread history
                     else:
-                        err_text = f"Unable to reach Gemini models. Details: {last_error}"
-                        st.error(err_text)
-                        st.session_state.messages.append(
-                            {"role": "assistant", "content": err_text}
+                        st.error(
+                            f"⚠️ Request failed due to rate limits or model errors (429/503). Details: {last_error}"
                         )
