@@ -121,16 +121,16 @@ def style_ownership(val):
             return ""
 
     if isinstance(numeric_val, (int, float)):
-        # High ownership (> 20%): Medium-Dark Green with Black text
+        # High growth (> 20%): Medium-Dark Green
         if numeric_val > 20:
             return "background-color: #81c784; color: #000000; font-weight: bold;"
-        # Moderate ownership (10% - 20%): Soft Light Green with Black text
+        # Moderate growth (10% - 20%): Soft Light Green
         elif 10 <= numeric_val <= 20:
             return "background-color: #c8e6c9; color: #000000;"
-        # Moderate low / drop (-5% to -20%): Light Orange with Black text
+        # Moderate drop (-5% to -20%): Light Orange
         elif -20 <= numeric_val <= -5:
             return "background-color: #ffe0b2; color: #000000;"
-        # Heavy drop (< -20%): Vibrant Orange with Black text
+        # Heavy drop (< -20%): Vibrant Orange
         elif numeric_val < -20:
             return "background-color: #ffb74d; color: #000000; font-weight: bold;"
     
@@ -211,15 +211,15 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
         )
 
         if is_fpl_stats_file and is_target_sheet:
-            gw_cols = [
+            # Strictly target only % change / ownership change columns
+            change_cols = [
                 c for c in filtered_df.columns 
-                if "gw" in c.lower() or "ownership" in c.lower() or "selected" in c.lower()
+                if "% change" in c.lower() or "change" in c.lower() or "diff" in c.lower()
             ]
             
-            if gw_cols:
-                # Use .map() to remain compatible with Pandas 2.1.0+ Styler API
+            if change_cols:
                 styled_df = filtered_df.style.map(
-                    style_ownership, subset=gw_cols
+                    style_ownership, subset=change_cols
                 )
             else:
                 styled_df = filtered_df
