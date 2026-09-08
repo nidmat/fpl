@@ -74,7 +74,7 @@ ESSENTIAL_COLS = [
 ]
 
 
-# Helper function to load datasets as structured JSON sections
+# Helper function to load datasets as structured JSON sections with TOKEN TRUNCATION
 @st.cache_data
 def load_all_excel_context():
     files = ["fpl_stats.xlsx", "fpl_analytics.xlsx"]
@@ -94,6 +94,16 @@ def load_all_excel_context():
                 cols_to_keep = [c for c in ESSENTIAL_COLS if c in df.columns]
                 if cols_to_keep:
                     df = df[cols_to_keep]
+
+                # --- TOKEN OPTIMIZATION: TRUNCATE TO TOP 70 PLAYERS PER TAB ---
+                if "total_points" in df.columns:
+                    df = df.sort_values(by="total_points", ascending=False).head(70)
+                elif "selected_by_percent" in df.columns:
+                    df = df.sort_values(by="selected_by_percent", ascending=False).head(70)
+                elif "minutes" in df.columns:
+                    df = df.sort_values(by="minutes", ascending=False).head(70)
+                else:
+                    df = df.head(70)
 
                 # Store as compact JSON string
                 records = df.to_dict(orient="records")
@@ -171,16 +181,12 @@ def style_ownership(val):
             return ""
 
     if isinstance(numeric_val, (int, float)):
-        # High growth (> 20%): Medium-Dark Green
         if numeric_val > 20:
             return "background-color: #81c784; color: #000000; font-weight: bold;"
-        # Moderate growth (10% - 20%): Soft Light Green
         elif 10 <= numeric_val <= 20:
             return "background-color: #c8e6c9; color: #000000;"
-        # Moderate drop (-5% to -20%): Light Orange
         elif -20 <= numeric_val <= -5:
             return "background-color: #ffe0b2; color: #000000;"
-        # Heavy drop (< -20%): Vibrant Orange
         elif numeric_val < -20:
             return "background-color: #ffb74d; color: #000000; font-weight: bold;"
     
@@ -192,7 +198,6 @@ def format_percentage_column(df: pd.DataFrame) -> pd.DataFrame:
     df_clean = df.copy()
     for col in df_clean.columns:
         if "%" in col or "percent" in col.lower():
-            # If string containing '%', strip and parse as float
             if df_clean[col].dtype == object:
                 try:
                     df_clean[col] = (
@@ -205,7 +210,6 @@ def format_percentage_column(df: pd.DataFrame) -> pd.DataFrame:
                 except Exception:
                     pass
 
-            # Round numeric percentage series to 2 decimal places
             if pd.api.types.is_numeric_dtype(df_clean[col]):
                 df_clean[col] = df_clean[col].round(2)
     return df_clean
@@ -233,7 +237,6 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
     else:
         st.sidebar.title("📊 File & Sheet Controls")
         
-        # Radio button 1: Choose the Workbook
         selected_workbook = st.sidebar.radio(
             "Select Excel File",
             options=list(workbooks.keys()),
@@ -241,7 +244,6 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
         
         available_sheets = list(workbooks[selected_workbook].keys())
 
-        # Radio button 2: Choose the Sheet within the selected Workbook
         selected_sheet = st.sidebar.radio(
             "Select Tab / Sheet",
             options=available_sheets,
@@ -266,10 +268,8 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             if selected_vals:
                 filtered_df = filtered_df[filtered_df[col].isin(selected_vals)]
 
-        # Apply strict 2-decimal rounding to all percentage columns everywhere
         filtered_df = format_percentage_column(filtered_df)
 
-        # Automatically pin/freeze the first column regardless of its name
         first_col = filtered_df.columns[0] if not filtered_df.empty else None
         column_config = (
             {first_col: st.column_config.Column(pinned=True)}
@@ -277,7 +277,6 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             else {}
         )
 
-        # Configure 2 decimal places display formatting for percentage columns
         for col in filtered_df.columns:
             if "%" in col or "percent" in col.lower():
                 if pd.api.types.is_numeric_dtype(filtered_df[col]):
@@ -285,9 +284,7 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
                         col, format="%.2f"
                     )
 
-        # Restrict cell background styling EXCLUSIVELY to fpl_stats.xlsx and specified tabs
         is_fpl_stats_file = "fpl_stats.xlsx" in selected_workbook
-        
         target_sheets = [
             "GK", "DEF", "MID", "FWD", "Defense", "Attack", "player ownership"
         ]
@@ -296,7 +293,6 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
         )
 
         if is_fpl_stats_file and is_target_sheet:
-            # Strictly target only % change / ownership change columns for background highlight
             change_cols = [
                 c for c in filtered_df.columns 
                 if "% change" in c.lower() or "change" in c.lower() or "diff" in c.lower()
@@ -331,7 +327,6 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
 elif st.session_state.active_tab == "💬 FPL AI Assistant":
     st.sidebar.title("💬 Shared Chat Threads")
 
-    # Load all threads from disk storage
     all_threads = load_all_threads()
 
     # --- CREATE NEW THREAD CONTROL ---
@@ -392,7 +387,6 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
         max_value=1.0,
         value=0.4,
         step=0.1,
-        help="Higher values allow more creative analysis and domain-based insights.",
     )
 
     top_p = st.sidebar.slider(
@@ -401,23 +395,28 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
         max_value=1.0,
         value=0.95,
         step=0.05,
-        help="Controls cumulative probability threshold for token selection.",
     )
 
     st.sidebar.markdown("---")
-    if st.sidebar.button("🗑️ Reset Current Thread", use_container_width=True):
-        all_threads[selected_thread] = [
-            {
-                "role": "assistant",
-                "content": f"Thread **{selected_thread}** has been reset.",
-            }
-        ]
-        save_all_threads(all_threads)
-        st.rerun()
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        if st.button("🗑️ Reset Thread", use_container_width=True):
+            all_threads[selected_thread] = [
+                {
+                    "role": "assistant",
+                    "content": f"Thread **{selected_thread}** has been reset.",
+                }
+            ]
+            save_all_threads(all_threads)
+            st.rerun()
+    with col2:
+        if st.button("🧹 Clear Cache", use_container_width=True):
+            st.cache_data.clear()
+            st.success("Cache cleared!")
 
     st.title("🤖 FPL Data Analyst Assistant")
     st.caption(
-        f"Active Thread: **{selected_thread}** | Shared Multi-User History Enabled | Active Model: **{selected_model_id}**"
+        f"Active Thread: **{selected_thread}** | Token Cap: **Top 70 Players/Category** | Active Model: **{selected_model_id}**"
     )
 
     if not api_key:
@@ -425,13 +424,11 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
             "⚠️ `GEMINI_API_KEY` is not configured. Please add it to your Streamlit secrets or environment variables."
         )
 
-    # Render all valid completed messages in the active thread
     current_thread_messages = all_threads.get(selected_thread, [])
     for msg in current_thread_messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # User Input & Streaming
     if user_prompt := st.chat_input(
         f"Ask a question in '{selected_thread}'..."
     ):
@@ -443,7 +440,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                 st.error("Cannot execute request: GEMINI_API_KEY is missing.")
             else:
                 with st.spinner(
-                    f"Analyzing routed data via `{selected_model_id}`..."
+                    f"Analyzing top 70 players/category via `{selected_model_id}`..."
                 ):
                     context_data = get_routed_context(user_prompt)
 
@@ -451,11 +448,12 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                         "You are an expert Fantasy Premier League (FPL) Data & Strategy Analyst.\n\n"
                         "ANALYSIS RULES:\n"
                         "1. Use the provided JSON spreadsheet data (`fpl_stats.xlsx` and `fpl_analytics.xlsx`) as your primary ground-truth dataset.\n"
-                        "2. When a user asks for metrics that are NOT explicitly present in the data (e.g., xG, xA, set-piece duties):\n"
+                        "2. Note: Data is truncated to top 70 players per category to comply with token limits.\n"
+                        "3. When a user asks for metrics that are NOT explicitly present in the data (e.g., xG, xA, set-piece duties):\n"
                         "   - Clearly state which metrics are present in the table vs. missing.\n"
                         "   - Present the best options available using available metrics (e.g., sort by DC, baseline bonus, or points).\n"
                         "   - Supplement your analysis with tactical FPL football knowledge to explain potential upside.\n"
-                        "3. Format your output cleanly using bullet points or Markdown tables.\n"
+                        "4. Format your output cleanly using bullet points or Markdown tables.\n"
                     )
 
                     candidate_models = [selected_model_id]
@@ -488,10 +486,9 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
 
                         except (errors.APIError, Exception) as e:
                             last_error = e
-                            time.sleep(1)
+                            time.sleep(3)  # Cooldown delay before trying next fallback model
                             continue
 
-                    # SUCCESS: Write stream, append user prompt & response to thread, then save to disk
                     if chunks:
                         def chunk_generator():
                             for c in chunks:
@@ -507,9 +504,8 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                         )
                         save_all_threads(all_threads)
 
-                    # FAILURE: Display temporary error notification without saving error/prompt to history
                     else:
                         st.error(
                             f"⚠️ Request failed due to API rate limits or model errors (429/503). Details: {last_error}"
-        )
+    )
                         
