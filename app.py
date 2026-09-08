@@ -504,7 +504,17 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                             for c in chunks:
                                 yield c
 
-                        full_response = st.write_stream(chunk_generator)
+                        full_response = st.write_stream(chunk_generator())
 
                         all_threads[selected_thread].append(
-     
+                            {"role": "user", "content": user_prompt}
+                        )
+                        all_threads[selected_thread].append(
+                            {"role": "assistant", "content": full_response}
+                        )
+                        save_all_threads(all_threads)
+
+                    else:
+                        st.error(
+                            f"⚠️ Request failed due to API rate limits or model errors (429/503). Details: {last_error}"
+                        )
