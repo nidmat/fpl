@@ -73,7 +73,6 @@ def get_routed_context(user_prompt: str) -> str:
         key_lower = key.lower()
 
         if has_specific_filter:
-            # Match specific position tabs
             if is_mid and ("mid" in key_lower or "stats" in key_lower):
                 selected_sections.append(f"--- {key} ---\n{json_data}")
             elif is_def and ("def" in key_lower or "stats" in key_lower):
@@ -83,28 +82,59 @@ def get_routed_context(user_prompt: str) -> str:
             elif is_gk and ("gk" in key_lower or "stats" in key_lower):
                 selected_sections.append(f"--- {key} ---\n{json_data}")
         else:
-            # Fallback for general queries: include all loaded sections
             selected_sections.append(f"--- {key} ---\n{json_data}")
 
-    # Fallback safety if filtering yields no matches
     if not selected_sections:
         selected_sections = [f"--- {k} ---\n{v}" for k, v in all_context.items()]
 
     return "\n\n".join(selected_sections)
 
 
-# Helper function to load dataset dictionary for the UI spreadsheet viewer
-# Returns plain DataFrames which serialize cleanly in Streamlit caching
+# Helper function to load dataset dictionary structured by file
 @st.cache_data
 def load_excel_tables():
-    files = {"Stats": "fpl_stats.xlsx", "Analytics": "fpl_analytics.xlsx"}
+    files = {
+        "FPL Stats (fpl_stats.xlsx)": "fpl_stats.xlsx",
+        "FPL Analytics (fpl_analytics.xlsx)": "fpl_analytics.xlsx",
+    }
     loaded_data = {}
-    for prefix, fname in files.items():
+    for label, fname in files.items():
         if os.path.exists(fname):
             xl = pd.ExcelFile(fname)
-            for sheet in xl.sheet_names:
-                loaded_data[f"[{prefix}] {sheet}"] = xl.parse(sheet)
+            loaded_data[label] = {
+                sheet: xl.parse(sheet) for sheet in xl.sheet_names
+            }
     return loaded_data
+
+
+# Style function using exclusively DARK TEXT (#000000) for high readability
+def style_ownership(val):
+    if pd.isna(val):
+        return ""
+    
+    numeric_val = val
+    if isinstance(val, str):
+        val_clean = val.replace("%", "").strip()
+        try:
+            numeric_val = float(val_clean)
+        except ValueError:
+            return ""
+
+    if isinstance(numeric_val, (int, float)):
+        # High ownership (> 20%): Medium-Dark Green with Black text
+        if numeric_val > 20:
+            return "background-color: #81c784; color: #000000; font-weight: bold;"
+        # Moderate ownership (10% - 20%): Soft Light Green with Black text
+        elif 10 <= numeric_val <= 20:
+            return "background-color: #c8e6c9; color: #000000;"
+        # Moderate low / drop (-5% to -20%): Light Orange with Black text
+        elif -20 <= numeric_val <= -5:
+            return "background-color: #ffe0b2; color: #000000;"
+        # Heavy drop (< -20%): Vibrant Orange with Black text
+        elif numeric_val < -20:
+            return "background-color: #ffb74d; color: #000000; font-weight: bold;"
+    
+    return ""
 
 
 # --- TOP NAVIGATION ---
@@ -120,20 +150,32 @@ st.session_state.active_tab = st.radio(
 # ==============================================================================
 if st.session_state.active_tab == "📊 Spreadsheet Viewer":
     st.title("⚽ FPL Spreadsheet Viewer")
-    tables = load_excel_tables()
+    workbooks = load_excel_tables()
 
-    if not tables:
+    if not workbooks:
         st.error(
             "Neither `fpl_stats.xlsx` nor `fpl_analytics.xlsx` was found in the project root."
         )
     else:
-        st.sidebar.title("📊 Spreadsheet Controls")
-        selected_sheet = st.sidebar.radio(
-            "Select Sheet View", list(tables.keys())
+        st.sidebar.title("📊 File & Sheet Controls")
+        
+        # Radio button 1: Choose the Workbook
+        selected_workbook = st.sidebar.radio(
+            "Select Excel File",
+            options=list(workbooks.keys()),
         )
-        df = tables[selected_sheet]
+        
+        available_sheets = list(workbooks[selected_workbook].keys())
 
-        st.subheader(f"Current Sheet: {selected_sheet}")
+        # Radio button 2: Choose the Sheet within the selected Workbook
+        selected_sheet = st.sidebar.radio(
+            "Select Tab / Sheet",
+            options=available_sheets,
+        )
+
+        df = workbooks[selected_workbook][selected_sheet]
+
+        st.subheader(f"Current View: {selected_workbook} ➔ {selected_sheet}")
 
         st.sidebar.markdown("---")
         st.sidebar.subheader("Data Filters")
@@ -158,8 +200,31 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             else {}
         )
 
+        # Apply cell styling for specified position and ownership sheets
+        target_sheets = [
+            "GK", "DEF", "MID", "FWD", "Defense", "Attack", "player ownership"
+        ]
+        is_target_sheet = any(
+            t.lower() in selected_sheet.lower() for t in target_sheets
+        )
+
+        if is_target_sheet:
+            gw_cols = [
+                c for c in filtered_df.columns 
+                if "gw" in c.lower() or "ownership" in c.lower() or "selected" in c.lower()
+            ]
+            
+            if gw_cols:
+                styled_df = filtered_df.style.applymap(
+                    style_ownership, subset=gw_cols
+                )
+            else:
+                styled_df = filtered_df
+        else:
+            styled_df = filtered_df
+
         st.dataframe(
-            filtered_df,
+            styled_df,
             use_container_width=True,
             hide_index=True,
             height=600,
@@ -250,7 +315,6 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                 with st.spinner(
                     f"Analyzing routed data via `{selected_model_id}`..."
                 ):
-                    # Route and isolate essential context for query
                     context_data = get_routed_context(user_prompt)
 
                     system_instruction = (
