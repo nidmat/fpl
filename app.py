@@ -114,7 +114,7 @@ def style_ownership(val):
     
     numeric_val = val
     if isinstance(val, str):
-        val_clean = val.replace("%", "").replace("ᵀᵒᵖ", "").split("[")[0].strip()
+        val_clean = val.replace("%", "").strip()
         try:
             numeric_val = float(val_clean)
         except ValueError:
@@ -142,6 +142,7 @@ def format_percentage_column(df: pd.DataFrame) -> pd.DataFrame:
     df_clean = df.copy()
     for col in df_clean.columns:
         if "%" in col or "percent" in col.lower():
+            # If string containing '%', strip and parse as float
             if df_clean[col].dtype == object:
                 try:
                     df_clean[col] = (
@@ -154,39 +155,10 @@ def format_percentage_column(df: pd.DataFrame) -> pd.DataFrame:
                 except Exception:
                     pass
 
+            # Round numeric percentage series to 2 decimal places
             if pd.api.types.is_numeric_dtype(df_clean[col]):
                 df_clean[col] = df_clean[col].round(2)
     return df_clean
-
-
-# Attaches positional rank ticker superscript string to numerical metric cells
-def add_rank_tickers(df: pd.DataFrame) -> pd.DataFrame:
-    df_ranked = df.copy()
-
-    # Exclude non-metric or identification columns from ranking
-    skip_cols = ["id", "code", "element", "team", "position", "element_type"]
-
-    for col in df_ranked.columns:
-        if col.lower() in skip_cols:
-            continue
-
-        if pd.api.types.is_numeric_dtype(df[col]):
-            # Rank highest value as #1
-            ranks = df[col].rank(ascending=False, method="min")
-
-            def format_val_with_rank(val, rank):
-                if pd.isna(val):
-                    return ""
-                rank_str = f"ᵀᵒᵖ [#{int(rank)}]"
-                return f"{val:.2f} {rank_str}"
-
-            formatted_series = [
-                format_val_with_rank(v, r)
-                for v, r in zip(df[col], ranks)
-            ]
-            df_ranked[col] = formatted_series
-
-    return df_ranked
 
 
 # --- TOP NAVIGATION ---
@@ -244,7 +216,7 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             if selected_vals:
                 filtered_df = filtered_df[filtered_df[col].isin(selected_vals)]
 
-        # Apply strict 2-decimal rounding to all percentage columns
+        # Apply strict 2-decimal rounding to all percentage columns everywhere
         filtered_df = format_percentage_column(filtered_df)
 
         # Automatically pin/freeze the first column regardless of its name
@@ -255,16 +227,13 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             else {}
         )
 
-        # Target specific positional sheets to attach rank tickers
-        position_sheets = ["GK", "DEF", "MID", "FWD", "Defense", "Attack"]
-        is_position_sheet = any(
-            p.lower() in selected_sheet.lower() for p in position_sheets
-        )
-
-        if is_position_sheet:
-            display_df = add_rank_tickers(filtered_df)
-        else:
-            display_df = filtered_df.copy()
+        # Configure 2 decimal places display formatting for percentage columns
+        for col in filtered_df.columns:
+            if "%" in col or "percent" in col.lower():
+                if pd.api.types.is_numeric_dtype(filtered_df[col]):
+                    column_config[col] = st.column_config.NumberColumn(
+                        col, format="%.2f"
+                    )
 
         # Restrict cell background styling EXCLUSIVELY to fpl_stats.xlsx and specified tabs
         is_fpl_stats_file = "fpl_stats.xlsx" in selected_workbook
@@ -279,18 +248,23 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
         if is_fpl_stats_file and is_target_sheet:
             # Strictly target only % change / ownership change columns for background highlight
             change_cols = [
-                c for c in display_df.columns 
+                c for c in filtered_df.columns 
                 if "% change" in c.lower() or "change" in c.lower() or "diff" in c.lower()
             ]
             
             if change_cols:
-                styled_df = display_df.style.map(
+                styled_df = filtered_df.style.map(
                     style_ownership, subset=change_cols
+                ).format(
+                    "{:.2f}",
+                    subset=[
+                        c for c in change_cols if pd.api.types.is_numeric_dtype(filtered_df[c])
+                    ],
                 )
             else:
-                styled_df = display_df
+                styled_df = filtered_df
         else:
-            styled_df = display_df
+            styled_df = filtered_df
 
         st.dataframe(
             styled_df,
