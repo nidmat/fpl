@@ -15,6 +15,56 @@ st.set_page_config(
 api_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
 client = genai.Client(api_key=api_key) if api_key else None
 
+SHARED_CHAT_FILE = "all_chat_threads.json"
+
+
+# --- MULTI-THREAD SHARED PERSISTENCE HELPERS ---
+def load_all_threads() -> dict[str, list[dict]]:
+    """Loads all shared chat threads from disk."""
+    if os.path.exists(SHARED_CHAT_FILE):
+        try:
+            with open(SHARED_CHAT_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and data:
+                    return data
+        except Exception:
+            pass
+    
+    # Default initial thread if file is missing or empty
+    return {
+        "General FPL Chat": [
+            {
+                "role": "assistant",
+                "content": "Hello! I am your shared FPL data agent. All completed chats here are saved and visible to all users. Select or create a thread in the sidebar to get started!",
+            }
+        ]
+    }
+
+
+def save_all_threads(threads: dict[str, list[dict]]):
+    """Persists all threads to disk, strictly filtering out error messages."""
+    valid_threads = {}
+    error_keywords = [
+        "429", "503", "ResourceExhausted", "APIError", 
+        "Unable to reach Gemini models", "GEMINI_API_KEY is missing",
+        "quota", "rate limit"
+    ]
+
+    for thread_name, messages in threads.items():
+        clean_messages = []
+        for msg in messages:
+            content = str(msg.get("content", ""))
+            is_error = any(err.lower() in content.lower() for err in error_keywords)
+            if not is_error:
+                clean_messages.append(msg)
+        valid_threads[thread_name] = clean_messages
+
+    try:
+        with open(SHARED_CHAT_FILE, "w", encoding="utf-8") as f:
+            json.dump(valid_threads, f, indent=2)
+    except Exception as e:
+        st.error(f"Failed to persist chat data: {e}")
+
 
 # Essential analytical columns across Gameweeks to minimize token bloat
 ESSENTIAL_COLS = [
@@ -276,9 +326,47 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
         st.caption(f"Showing {len(filtered_df)} of {len(df)} total rows")
 
 # ==============================================================================
-# VIEW 2: CHATGPT-STYLE AI ASSISTANT
+# VIEW 2: MULTI-CHAT AGENT (SHARED ACROSS USERS)
 # ==============================================================================
 elif st.session_state.active_tab == "💬 FPL AI Assistant":
+    st.sidebar.title("💬 Shared Chat Threads")
+
+    # Load all threads from disk storage
+    all_threads = load_all_threads()
+
+    # --- CREATE NEW THREAD CONTROL ---
+    with st.sidebar.expander("➕ Create New Chat Thread", expanded=False):
+        new_thread_name = st.text_input("Thread Topic Name", placeholder="e.g., GW5 Captaincy & Wildcard")
+        if st.button("Create Thread", use_container_width=True):
+            if new_thread_name.strip():
+                clean_name = new_thread_name.strip()
+                if clean_name not in all_threads:
+                    all_threads[clean_name] = [
+                        {
+                            "role": "assistant",
+                            "content": f"Started thread: **{clean_name}**. Ask any questions regarding your FPL spreadsheets!",
+                        }
+                    ]
+                    save_all_threads(all_threads)
+                    st.session_state.active_thread = clean_name
+                    st.rerun()
+                else:
+                    st.warning("A thread with that name already exists!")
+
+    # Thread Selection Controls
+    thread_names = list(all_threads.keys())
+    
+    if "active_thread" not in st.session_state or st.session_state.active_thread not in thread_names:
+        st.session_state.active_thread = thread_names[0]
+
+    selected_thread = st.sidebar.radio(
+        "Select Active Thread",
+        options=thread_names,
+        index=thread_names.index(st.session_state.active_thread),
+    )
+    st.session_state.active_thread = selected_thread
+
+    st.sidebar.markdown("---")
     st.sidebar.title("🤖 Model Configuration")
 
     MODEL_OPTIONS = {
@@ -316,9 +404,20 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
         help="Controls cumulative probability threshold for token selection.",
     )
 
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🗑️ Reset Current Thread", use_container_width=True):
+        all_threads[selected_thread] = [
+            {
+                "role": "assistant",
+                "content": f"Thread **{selected_thread}** has been reset.",
+            }
+        ]
+        save_all_threads(all_threads)
+        st.rerun()
+
     st.title("🤖 FPL Data Analyst Assistant")
     st.caption(
-        f"Active Model: **{selected_model_id}** | Token-optimized JSON context with dynamic tab routing."
+        f"Active Thread: **{selected_thread}** | Shared Multi-User History Enabled | Active Model: **{selected_model_id}**"
     )
 
     if not api_key:
@@ -326,34 +425,22 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
             "⚠️ `GEMINI_API_KEY` is not configured. Please add it to your Streamlit secrets or environment variables."
         )
 
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {
-                "role": "assistant",
-                "content": "Hello! I am your FPL data agent. Ask me anything about player ownership, positions, chips, or defensive contribution stats across your spreadsheets!",
-            }
-        ]
-
-    for msg in st.session_state.messages:
+    # Render all valid completed messages in the active thread
+    current_thread_messages = all_threads.get(selected_thread, [])
+    for msg in current_thread_messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
+    # User Input & Streaming
     if user_prompt := st.chat_input(
-        "e.g., Which midfielder has the best DC potential in fpl_analytics?"
+        f"Ask a question in '{selected_thread}'..."
     ):
-        st.session_state.messages.append(
-            {"role": "user", "content": user_prompt}
-        )
         with st.chat_message("user"):
             st.markdown(user_prompt)
 
         with st.chat_message("assistant"):
             if not client:
-                error_msg = "Cannot execute request: GEMINI_API_KEY is missing."
-                st.error(error_msg)
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": error_msg}
-                )
+                st.error("Cannot execute request: GEMINI_API_KEY is missing.")
             else:
                 with st.spinner(
                     f"Analyzing routed data via `{selected_model_id}`..."
@@ -404,6 +491,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                             time.sleep(1)
                             continue
 
+                    # SUCCESS: Write stream, append user prompt & response to thread, then save to disk
                     if chunks:
                         def chunk_generator():
                             for c in chunks:
@@ -411,12 +499,17 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
 
                         full_response = st.write_stream(chunk_generator())
 
-                        st.session_state.messages.append(
+                        all_threads[selected_thread].append(
+                            {"role": "user", "content": user_prompt}
+                        )
+                        all_threads[selected_thread].append(
                             {"role": "assistant", "content": full_response}
                         )
+                        save_all_threads(all_threads)
+
+                    # FAILURE: Display temporary error notification without saving error/prompt to history
                     else:
-                        err_text = f"Unable to reach Gemini models. Details: {last_error}"
-                        st.error(err_text)
-                        st.session_state.messages.append(
-                            {"role": "assistant", "content": err_text}
-                        )
+                        st.error(
+                            f"⚠️ Request failed due to API rate limits or model errors (429/503). Details: {last_error}"
+        )
+                        
