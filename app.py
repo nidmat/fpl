@@ -142,6 +142,7 @@ def format_percentage_column(df: pd.DataFrame) -> pd.DataFrame:
     df_clean = df.copy()
     for col in df_clean.columns:
         if "%" in col or "percent" in col.lower():
+            # If string containing '%', strip and parse as float
             if df_clean[col].dtype == object:
                 try:
                     df_clean[col] = (
@@ -154,6 +155,7 @@ def format_percentage_column(df: pd.DataFrame) -> pd.DataFrame:
                 except Exception:
                     pass
 
+            # Round numeric percentage series to 2 decimal places
             if pd.api.types.is_numeric_dtype(df_clean[col]):
                 df_clean[col] = df_clean[col].round(2)
     return df_clean
@@ -214,7 +216,7 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             if selected_vals:
                 filtered_df = filtered_df[filtered_df[col].isin(selected_vals)]
 
-        # Apply strict 2-decimal rounding to all percentage columns
+        # Apply strict 2-decimal rounding to all percentage columns everywhere
         filtered_df = format_percentage_column(filtered_df)
 
         # Automatically pin/freeze the first column regardless of its name
@@ -225,9 +227,15 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
             else {}
         )
 
-        display_df = filtered_df.copy()
+        # Configure 2 decimal places display formatting for percentage columns
+        for col in filtered_df.columns:
+            if "%" in col or "percent" in col.lower():
+                if pd.api.types.is_numeric_dtype(filtered_df[col]):
+                    column_config[col] = st.column_config.NumberColumn(
+                        col, format="%.2f"
+                    )
 
-        # Restrict cell background styling EXCLUSIVELY to fpl_stats.xlsx
+        # Restrict cell background styling EXCLUSIVELY to fpl_stats.xlsx and specified tabs
         is_fpl_stats_file = "fpl_stats.xlsx" in selected_workbook
         
         target_sheets = [
@@ -240,18 +248,23 @@ if st.session_state.active_tab == "📊 Spreadsheet Viewer":
         if is_fpl_stats_file and is_target_sheet:
             # Strictly target only % change / ownership change columns for background highlight
             change_cols = [
-                c for c in display_df.columns 
+                c for c in filtered_df.columns 
                 if "% change" in c.lower() or "change" in c.lower() or "diff" in c.lower()
             ]
             
             if change_cols:
-                styled_df = display_df.style.map(
+                styled_df = filtered_df.style.map(
                     style_ownership, subset=change_cols
+                ).format(
+                    "{:.2f}",
+                    subset=[
+                        c for c in change_cols if pd.api.types.is_numeric_dtype(filtered_df[c])
+                    ],
                 )
             else:
-                styled_df = display_df
+                styled_df = filtered_df
         else:
-            styled_df = display_df
+            styled_df = filtered_df
 
         st.dataframe(
             styled_df,
@@ -407,4 +420,3 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                         st.session_state.messages.append(
                             {"role": "assistant", "content": err_text}
                         )
-                        
