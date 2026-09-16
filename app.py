@@ -1,5 +1,5 @@
-import os
 import json
+import os
 import time
 import pandas as pd
 import streamlit as st
@@ -9,6 +9,7 @@ from google.genai import types
 # Standard copy button fallback handler
 try:
     from st_copy_button import st_copy_button
+
     HAS_ST_COPY = True
 except ImportError:
     HAS_ST_COPY = False
@@ -37,7 +38,7 @@ def load_all_threads() -> dict[str, list[dict]]:
                     return data
         except Exception:
             pass
-    
+
     return {
         "General FPL Chat": [
             {
@@ -52,16 +53,23 @@ def save_all_threads(threads: dict[str, list[dict]]):
     """Persists all threads to disk, strictly filtering out error messages."""
     valid_threads = {}
     error_keywords = [
-        "429", "503", "ResourceExhausted", "APIError", 
-        "Unable to reach Gemini models", "GEMINI_API_KEY is missing",
-        "quota", "rate limit"
+        "429",
+        "503",
+        "ResourceExhausted",
+        "APIError",
+        "Unable to reach Gemini models",
+        "GEMINI_API_KEY is missing",
+        "quota",
+        "rate limit",
     ]
 
     for thread_name, messages in threads.items():
         clean_messages = []
         for msg in messages:
             content = str(msg.get("content", ""))
-            is_error = any(err.lower() in content.lower() for err in error_keywords)
+            is_error = any(
+                err.lower() in content.lower() for err in error_keywords
+            )
             if not is_error:
                 clean_messages.append(msg)
         valid_threads[thread_name] = clean_messages
@@ -86,7 +94,9 @@ def load_all_excel_context(sort_metric: str = "total_points"):
                 df = xl.parse(sheet)
 
                 # Remove unnamed pandas index headers if present
-                df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed')]
+                df = df.loc[
+                    :, ~df.columns.astype(str).str.contains("^Unnamed")
+                ]
 
                 # --- OPTIONAL SORTING WITHOUT ROW TRUNCATION ---
                 target_sort = None
@@ -95,7 +105,9 @@ def load_all_excel_context(sort_metric: str = "total_points"):
                         target_sort = col
                         break
 
-                if target_sort and pd.api.types.is_numeric_dtype(df[target_sort]):
+                if target_sort and pd.api.types.is_numeric_dtype(
+                    df[target_sort]
+                ):
                     df = df.sort_values(by=target_sort, ascending=False)
 
                 # Convert entire DataFrame (all rows & all columns intact) to CSV text
@@ -108,7 +120,7 @@ def load_all_excel_context(sort_metric: str = "total_points"):
 # Smart router function loading complete dataset context across all sheets
 def get_routed_context(user_prompt: str) -> str:
     prompt_lower = user_prompt.lower()
-    
+
     sort_metric = "total_points"
     if "dc" in prompt_lower or "defensive contribution" in prompt_lower:
         sort_metric = "DC"
@@ -122,14 +134,24 @@ def get_routed_context(user_prompt: str) -> str:
         sort_metric = "bonus"
 
     all_context = load_all_excel_context(sort_metric=sort_metric)
-    
+
     analytics_sections = []
     stats_sections = []
-    
-    is_mid = any(k in prompt_lower for k in ["mid", "midfielder", "wing", "mids", "midfielders"])
-    is_def = any(k in prompt_lower for k in ["def", "defender", "back", "cb", "lb", "rb", "defenders"])
-    is_fwd = any(k in prompt_lower for k in ["fwd", "forward", "striker", "att", "forwards"])
-    is_gk = any(k in prompt_lower for k in ["gk", "keeper", "goalkeeper", "goalkeepers"])
+
+    is_mid = any(
+        k in prompt_lower
+        for k in ["mid", "midfielder", "wing", "mids", "midfielders"]
+    )
+    is_def = any(
+        k in prompt_lower
+        for k in ["def", "defender", "back", "cb", "lb", "rb", "defenders"]
+    )
+    is_fwd = any(
+        k in prompt_lower for k in ["fwd", "forward", "striker", "att", "forwards"]
+    )
+    is_gk = any(
+        k in prompt_lower for k in ["gk", "keeper", "goalkeeper", "goalkeepers"]
+    )
 
     has_specific_filter = is_mid or is_def or is_fwd or is_gk
 
@@ -138,31 +160,65 @@ def get_routed_context(user_prompt: str) -> str:
 
         if "fpl_analytics.xlsx" in key:
             if has_specific_filter:
-                if is_mid and ("mid" in key_lower or "all" in key_lower or "overall" in key_lower):
+                if is_mid and (
+                    "mid" in key_lower
+                    or "all" in key_lower
+                    or "overall" in key_lower
+                ):
                     analytics_sections.append(f"=== {key} ===\n{csv_data}")
-                elif is_def and ("def" in key_lower or "all" in key_lower or "overall" in key_lower):
+                elif is_def and (
+                    "def" in key_lower
+                    or "all" in key_lower
+                    or "overall" in key_lower
+                ):
                     analytics_sections.append(f"=== {key} ===\n{csv_data}")
-                elif is_fwd and ("fwd" in key_lower or "all" in key_lower or "overall" in key_lower):
+                elif is_fwd and (
+                    "fwd" in key_lower
+                    or "all" in key_lower
+                    or "overall" in key_lower
+                ):
                     analytics_sections.append(f"=== {key} ===\n{csv_data}")
-                elif is_gk and ("gk" in key_lower or "all" in key_lower or "overall" in key_lower):
+                elif is_gk and (
+                    "gk" in key_lower
+                    or "all" in key_lower
+                    or "overall" in key_lower
+                ):
                     analytics_sections.append(f"=== {key} ===\n{csv_data}")
             else:
                 analytics_sections.append(f"=== {key} ===\n{csv_data}")
         else:
             if has_specific_filter:
-                if is_mid and ("mid" in key_lower or "all" in key_lower or "overall" in key_lower):
+                if is_mid and (
+                    "mid" in key_lower
+                    or "all" in key_lower
+                    or "overall" in key_lower
+                ):
                     stats_sections.append(f"=== {key} ===\n{csv_data}")
-                elif is_def and ("def" in key_lower or "all" in key_lower or "overall" in key_lower):
+                elif is_def and (
+                    "def" in key_lower
+                    or "all" in key_lower
+                    or "overall" in key_lower
+                ):
                     stats_sections.append(f"=== {key} ===\n{csv_data}")
-                elif is_fwd and ("fwd" in key_lower or "all" in key_lower or "overall" in key_lower):
+                elif is_fwd and (
+                    "fwd" in key_lower
+                    or "all" in key_lower
+                    or "overall" in key_lower
+                ):
                     stats_sections.append(f"=== {key} ===\n{csv_data}")
-                elif is_gk and ("gk" in key_lower or "all" in key_lower or "overall" in key_lower):
+                elif is_gk and (
+                    "gk" in key_lower
+                    or "all" in key_lower
+                    or "overall" in key_lower
+                ):
                     stats_sections.append(f"=== {key} ===\n{csv_data}")
 
     combined_sections = analytics_sections + stats_sections
 
     if not combined_sections:
-        combined_sections = [f"=== {k} ===\n{v}" for k, v in all_context.items()]
+        combined_sections = [
+            f"=== {k} ===\n{v}" for k, v in all_context.items()
+        ]
 
     return "\n\n".join(combined_sections)
 
@@ -180,7 +236,7 @@ def load_excel_workbook(fname: str) -> dict[str, pd.DataFrame]:
 def style_ownership(val):
     if pd.isna(val):
         return ""
-    
+
     numeric_val = val
     if isinstance(val, str):
         val_clean = val.replace("%", "").strip()
@@ -197,8 +253,10 @@ def style_ownership(val):
         elif -20 <= numeric_val <= -5:
             return "background-color: #ffe0b2; color: #000000;"
         elif numeric_val < -20:
-            return "background-color: #ffb74d; color: #000000; font-weight: bold;"
-    
+            return (
+                "background-color: #ffb74d; color: #000000; font-weight: bold;"
+            )
+
     return ""
 
 
@@ -215,7 +273,9 @@ def format_percentage_column(df: pd.DataFrame) -> pd.DataFrame:
                         .str.replace("%", "", regex=False)
                         .str.strip()
                     )
-                    df_clean[col] = pd.to_numeric(df_clean[col], errors="ignore")
+                    df_clean[col] = pd.to_numeric(
+                        df_clean[col], errors="ignore"
+                    )
                 except Exception:
                     pass
 
@@ -235,7 +295,9 @@ def render_copy_button(text_to_copy: str, key_suffix: str):
         )
     else:
         if st.button("📋 Copy Text", key=f"btn_copy_{key_suffix}"):
-            st.toast("Response text ready! Select and copy from the code section below.")
+            st.toast(
+                "Response text ready! Select and copy from the code section below."
+            )
             st.code(text_to_copy, language=None)
 
 
@@ -277,15 +339,15 @@ def render_sheet_viewer(fname: str, label: str):
                 key=f"filter_{fname}_{selected_sheet}_{col}",
             )
             if selected_vals:
-                filtered_df = filtered_df[filtered_df[col].isin(selected_vals)]
+                filtered_df = filtered_df[
+                    filtered_df[col].isin(selected_vals)
+                ]
 
     filtered_df = format_percentage_column(filtered_df)
 
     first_col = filtered_df.columns[0] if not filtered_df.empty else None
     column_config = (
-        {first_col: st.column_config.Column(pinned=True)}
-        if first_col
-        else {}
+        {first_col: st.column_config.Column(pinned=True)} if first_col else {}
     )
 
     for col in filtered_df.columns:
@@ -297,7 +359,13 @@ def render_sheet_viewer(fname: str, label: str):
 
     is_fpl_stats_file = "fpl_stats.xlsx" in fname
     target_sheets = [
-        "GK", "DEF", "MID", "FWD", "Defense", "Attack", "player ownership"
+        "GK",
+        "DEF",
+        "MID",
+        "FWD",
+        "Defense",
+        "Attack",
+        "player ownership",
     ]
     is_target_sheet = any(
         t.lower() in selected_sheet.lower() for t in target_sheets
@@ -305,17 +373,22 @@ def render_sheet_viewer(fname: str, label: str):
 
     if is_fpl_stats_file and is_target_sheet:
         change_cols = [
-            c for c in filtered_df.columns 
-            if "% change" in c.lower() or "change" in c.lower() or "diff" in c.lower()
+            c
+            for c in filtered_df.columns
+            if "% change" in c.lower()
+            or "change" in c.lower()
+            or "diff" in c.lower()
         ]
-        
+
         if change_cols:
             styled_df = filtered_df.style.map(
                 style_ownership, subset=change_cols
             ).format(
                 "{:.2f}",
                 subset=[
-                    c for c in change_cols if pd.api.types.is_numeric_dtype(filtered_df[c])
+                    c
+                    for c in change_cols
+                    if pd.api.types.is_numeric_dtype(filtered_df[c])
                 ],
             )
         else:
@@ -366,7 +439,9 @@ elif app_mode == "💬 FPL AI Assistant":
     all_threads = load_all_threads()
 
     with st.sidebar.expander("➕ Create New Chat Thread", expanded=False):
-        new_thread_name = st.text_input("Thread Topic Name", placeholder="e.g., GW5 DEF Analysis")
+        new_thread_name = st.text_input(
+            "Thread Topic Name", placeholder="e.g., GW5 DEF Analysis"
+        )
         if st.button("Create Thread", use_container_width=True):
             if new_thread_name.strip():
                 clean_name = new_thread_name.strip()
@@ -384,8 +459,11 @@ elif app_mode == "💬 FPL AI Assistant":
                     st.warning("A thread with that name already exists!")
 
     thread_names = list(all_threads.keys())
-    
-    if "active_thread" not in st.session_state or st.session_state.active_thread not in thread_names:
+
+    if (
+        "active_thread" not in st.session_state
+        or st.session_state.active_thread not in thread_names
+    ):
         st.session_state.active_thread = thread_names[0]
 
     selected_thread = st.sidebar.radio(
@@ -487,6 +565,8 @@ elif app_mode == "💬 FPL AI Assistant":
                         "1. EXHAUSTIVE EVALUATION: Read through the complete CSV data provided across all sheets without omitting players present in the context.\n"
                         "2. DISPLAY ACTUAL PLAYER NAMES: Map player names correctly from columns (e.g., 'name', 'web_name', or column 0). Never use placeholder names.\n"
                         "3. ACCURATE STAT MATCHING: Verify points, goals, assists, minutes, and team data for every queried player directly from the loaded CSV string.\n"
+                        "4. SAMPLE SIZE FILTERING: Always check total minutes played and starts before recommending a player or utilizing per-90 metrics. Ignore or heavily discount players with low minutes (e.g., <180–270 minutes or under 2–3 starts) when making transfer recommendations or rank comparisons.\n"
+                        "5. PER 90 RATE NORMALIZATION: Do NOT rely on DC90 (Defensive Contribution per 90), xG90, xA90, xGI90, or saves per 90 for decision-making if a player has limited minutes/starts. Small sample sizes cause severe statistical noise (e.g., a sub getting 1 goal in 15 minutes = 6.00 xG90). Always mention if a high per-90 score is distorted by low minutes, and prioritize absolute totals and regular starters.\n"
                     )
 
                     contents_payload = []
@@ -495,19 +575,25 @@ elif app_mode == "💬 FPL AI Assistant":
                         contents_payload.append(
                             types.Content(
                                 role=api_role,
-                                parts=[types.Part.from_text(text=msg["content"])]
+                                parts=[
+                                    types.Part.from_text(text=msg["content"])
+                                ],
                             )
                         )
-                    
+
                     contents_payload.append(
                         types.Content(
                             role="user",
-                            parts=[types.Part.from_text(text=user_prompt)]
+                            parts=[types.Part.from_text(text=user_prompt)],
                         )
                     )
 
                     candidate_models = [selected_model_id]
-                    for fallback in ["gemini-3.6-flash", "gemini-3.6-pro", "gemini-3.5-flash-lite"]:
+                    for fallback in [
+                        "gemini-3.6-flash",
+                        "gemini-3.6-pro",
+                        "gemini-3.5-flash-lite",
+                    ]:
                         if fallback not in candidate_models:
                             candidate_models.append(fallback)
 
@@ -515,14 +601,16 @@ elif app_mode == "💬 FPL AI Assistant":
 
                     for model_id in candidate_models:
                         try:
-                            response_stream = client.models.generate_content_stream(
-                                model=model_id,
-                                contents=contents_payload,
-                                config=types.GenerateContentConfig(
-                                    system_instruction=system_instruction,
-                                    temperature=temperature,
-                                    top_p=top_p,
-                                ),
+                            response_stream = (
+                                client.models.generate_content_stream(
+                                    model=model_id,
+                                    contents=contents_payload,
+                                    config=types.GenerateContentConfig(
+                                        system_instruction=system_instruction,
+                                        temperature=temperature,
+                                        top_p=top_p,
+                                    ),
+                                )
                             )
 
                             def stream_generator():
@@ -532,10 +620,16 @@ elif app_mode == "💬 FPL AI Assistant":
 
                             full_response = st.write_stream(stream_generator())
 
-                            all_threads[selected_thread].append({"role": "user", "content": user_prompt})
-                            all_threads[selected_thread].append({"role": "assistant", "content": full_response})
+                            all_threads[selected_thread].append(
+                                {"role": "user", "content": user_prompt}
+                            )
+                            all_threads[selected_thread].append(
+                                {"role": "assistant", "content": full_response}
+                            )
                             save_all_threads(all_threads)
-                            render_copy_button(full_response, f"live_{time.time()}")
+                            render_copy_button(
+                                full_response, f"live_{time.time()}"
+                            )
 
                             last_error = None
                             break
@@ -546,6 +640,10 @@ elif app_mode == "💬 FPL AI Assistant":
                     if last_error is not None:
                         error_msg = f"Unable to reach Gemini models. Error: {last_error}"
                         st.error(error_msg)
-                        all_threads[selected_thread].append({"role": "user", "content": user_prompt})
-                        all_threads[selected_thread].append({"role": "assistant", "content": error_msg})
+                        all_threads[selected_thread].append(
+                            {"role": "user", "content": user_prompt}
+                        )
+                        all_threads[selected_thread].append(
+                            {"role": "assistant", "content": error_msg}
+                        )
                         save_all_threads(all_threads)
