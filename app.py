@@ -4,7 +4,7 @@ import time
 import pandas as pd
 import streamlit as st
 from google import genai
-from google.genai import types, errors
+from google.genai import types
 
 # Standard copy button fallback handler
 try:
@@ -38,7 +38,6 @@ def load_all_threads() -> dict[str, list[dict]]:
         except Exception:
             pass
     
-    # Default initial thread if file is missing or empty
     return {
         "General FPL Chat": [
             {
@@ -74,17 +73,9 @@ def save_all_threads(threads: dict[str, list[dict]]):
         st.error(f"Failed to persist chat data: {e}")
 
 
-# Essential analytical columns across Gameweeks to minimize token bloat
-ESSENTIAL_COLS = [
-    "name", "web_name", "element_type", "position", "team", 
-    "now_cost", "DC", "selected_by_percent", "total_points", 
-    "minutes", "goals_scored", "assists", "clean_sheets", "goals_conceded", "bonus", "xG", "xA"
-]
-
-
-# Helper function to load datasets as structured JSON sections with TOKEN TRUNCATION
+# Complete CSV Data Loader — ALL ROWS AND COLUMNS PRESERVED WITHOUT TRUNCATION
 @st.cache_data
-def load_all_excel_context():
+def load_all_excel_context(sort_metric: str = "total_points"):
     files = ["fpl_stats.xlsx", "fpl_analytics.xlsx"]
     context_dict = {}
 
@@ -93,95 +84,96 @@ def load_all_excel_context():
             xl = pd.ExcelFile(fname)
             for sheet in xl.sheet_names:
                 df = xl.parse(sheet)
-                
-                # Filter out 0-minute bench players to clear dead weight
-                if "minutes" in df.columns:
-                    df = df[df["minutes"] > 0]
 
-                # Retain only relevant metrics
-                cols_to_keep = [c for c in ESSENTIAL_COLS if c in df.columns]
-                if cols_to_keep:
-                    df = df[cols_to_keep]
+                # Remove unnamed pandas index headers if present
+                df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed')]
 
-                # --- TOKEN OPTIMIZATION: TRUNCATE TO TOP 70 PLAYERS PER TAB ---
-                if "total_points" in df.columns:
-                    df = df.sort_values(by="total_points", ascending=False).head(70)
-                elif "selected_by_percent" in df.columns:
-                    df = df.sort_values(by="selected_by_percent", ascending=False).head(70)
-                elif "minutes" in df.columns:
-                    df = df.sort_values(by="minutes", ascending=False).head(70)
-                else:
-                    df = df.head(70)
+                # --- OPTIONAL SORTING WITHOUT ROW TRUNCATION ---
+                target_sort = None
+                for col in df.columns:
+                    if str(col).lower() == sort_metric.lower():
+                        target_sort = col
+                        break
 
-                # Store as compact JSON string
-                records = df.to_dict(orient="records")
-                context_dict[f"FILE: {fname} | TAB: {sheet}"] = json.dumps(
-                    records, separators=(",", ":")
-                )
+                if target_sort and pd.api.types.is_numeric_dtype(df[target_sort]):
+                    df = df.sort_values(by=target_sort, ascending=False)
+
+                # Convert entire DataFrame (all rows & all columns intact) to CSV text
+                csv_data = df.to_csv(index=False)
+                context_dict[f"FILE: {fname} | TAB: {sheet}"] = csv_data
 
     return context_dict
 
 
-# Smart router function to inject only prompt-relevant context sections
+# Smart router function loading complete dataset context across all sheets
 def get_routed_context(user_prompt: str) -> str:
-    all_context = load_all_excel_context()
     prompt_lower = user_prompt.lower()
     
-    selected_sections = []
+    sort_metric = "total_points"
+    if "dc" in prompt_lower or "defensive contribution" in prompt_lower:
+        sort_metric = "DC"
+    elif "xg" in prompt_lower:
+        sort_metric = "xG"
+    elif "xa" in prompt_lower:
+        sort_metric = "xA"
+    elif "xgi" in prompt_lower:
+        sort_metric = "xGI"
+    elif "bonus" in prompt_lower or "bps" in prompt_lower:
+        sort_metric = "bonus"
+
+    all_context = load_all_excel_context(sort_metric=sort_metric)
     
-    # Identify target position or query focus
-    is_mid = any(k in prompt_lower for k in ["mid", "midfielder", "wing"])
-    is_def = any(k in prompt_lower for k in ["def", "defender", "back", "cb", "lb", "rb"])
-    is_fwd = any(k in prompt_lower for k in ["fwd", "forward", "striker", "att"])
-    is_gk = any(k in prompt_lower for k in ["gk", "keeper", "goalkeeper"])
+    analytics_sections = []
+    stats_sections = []
+    
+    is_mid = any(k in prompt_lower for k in ["mid", "midfielder", "wing", "mids", "midfielders"])
+    is_def = any(k in prompt_lower for k in ["def", "defender", "back", "cb", "lb", "rb", "defenders"])
+    is_fwd = any(k in prompt_lower for k in ["fwd", "forward", "striker", "att", "forwards"])
+    is_gk = any(k in prompt_lower for k in ["gk", "keeper", "goalkeeper", "goalkeepers"])
 
     has_specific_filter = is_mid or is_def or is_fwd or is_gk
 
-    for key, json_data in all_context.items():
+    for key, csv_data in all_context.items():
         key_lower = key.lower()
 
-        if has_specific_filter:
-            if is_mid and ("mid" in key_lower or "stats" in key_lower):
-                selected_sections.append(f"--- {key} ---\n{json_data}")
-            elif is_def and ("def" in key_lower or "stats" in key_lower):
-                selected_sections.append(f"--- {key} ---\n{json_data}")
-            elif is_fwd and ("fwd" in key_lower or "stats" in key_lower):
-                # Clean DC metrics from FWD json data payload if evaluating FWD specific sheet
-                if "fwd" in key_lower:
-                    try:
-                        fwd_records = json.loads(json_data)
-                        for r in fwd_records:
-                            r.pop("DC", None)
-                        json_data = json.dumps(fwd_records, separators=(",", ":"))
-                    except Exception:
-                        pass
-                selected_sections.append(f"--- {key} ---\n{json_data}")
-            elif is_gk and ("gk" in key_lower or "stats" in key_lower):
-                selected_sections.append(f"--- {key} ---\n{json_data}")
+        if "fpl_analytics.xlsx" in key:
+            if has_specific_filter:
+                if is_mid and ("mid" in key_lower or "all" in key_lower or "overall" in key_lower):
+                    analytics_sections.append(f"=== {key} ===\n{csv_data}")
+                elif is_def and ("def" in key_lower or "all" in key_lower or "overall" in key_lower):
+                    analytics_sections.append(f"=== {key} ===\n{csv_data}")
+                elif is_fwd and ("fwd" in key_lower or "all" in key_lower or "overall" in key_lower):
+                    analytics_sections.append(f"=== {key} ===\n{csv_data}")
+                elif is_gk and ("gk" in key_lower or "all" in key_lower or "overall" in key_lower):
+                    analytics_sections.append(f"=== {key} ===\n{csv_data}")
+            else:
+                analytics_sections.append(f"=== {key} ===\n{csv_data}")
         else:
-            selected_sections.append(f"--- {key} ---\n{json_data}")
+            if has_specific_filter:
+                if is_mid and ("mid" in key_lower or "all" in key_lower or "overall" in key_lower):
+                    stats_sections.append(f"=== {key} ===\n{csv_data}")
+                elif is_def and ("def" in key_lower or "all" in key_lower or "overall" in key_lower):
+                    stats_sections.append(f"=== {key} ===\n{csv_data}")
+                elif is_fwd and ("fwd" in key_lower or "all" in key_lower or "overall" in key_lower):
+                    stats_sections.append(f"=== {key} ===\n{csv_data}")
+                elif is_gk and ("gk" in key_lower or "all" in key_lower or "overall" in key_lower):
+                    stats_sections.append(f"=== {key} ===\n{csv_data}")
 
-    if not selected_sections:
-        selected_sections = [f"--- {k} ---\n{v}" for k, v in all_context.items()]
+    combined_sections = analytics_sections + stats_sections
 
-    return "\n\n".join(selected_sections)
+    if not combined_sections:
+        combined_sections = [f"=== {k} ===\n{v}" for k, v in all_context.items()]
+
+    return "\n\n".join(combined_sections)
 
 
 # Helper function to load dataset dictionary structured by file
 @st.cache_data
-def load_excel_tables():
-    files = {
-        "FPL Stats (fpl_stats.xlsx)": "fpl_stats.xlsx",
-        "FPL Analytics (fpl_analytics.xlsx)": "fpl_analytics.xlsx",
-    }
-    loaded_data = {}
-    for label, fname in files.items():
-        if os.path.exists(fname):
-            xl = pd.ExcelFile(fname)
-            loaded_data[label] = {
-                sheet: xl.parse(sheet) for sheet in xl.sheet_names
-            }
-    return loaded_data
+def load_excel_workbook(fname: str) -> dict[str, pd.DataFrame]:
+    if os.path.exists(fname):
+        xl = pd.ExcelFile(fname)
+        return {sheet: xl.parse(sheet) for sheet in xl.sheet_names}
+    return {}
 
 
 # Style function using exclusively DARK TEXT (#000000) for high readability
@@ -242,129 +234,139 @@ def render_copy_button(text_to_copy: str, key_suffix: str):
             key=f"copy_{key_suffix}",
         )
     else:
-        # Fallback copy mechanism using code box or native button toast
         if st.button("📋 Copy Text", key=f"btn_copy_{key_suffix}"):
             st.toast("Response text ready! Select and copy from the code section below.")
             st.code(text_to_copy, language=None)
 
 
-# --- TOP NAVIGATION ---
-st.session_state.active_tab = st.radio(
-    "Navigation",
-    ["📊 Spreadsheet Viewer", "💬 FPL AI Assistant"],
-    horizontal=True,
-    label_visibility="collapsed",
-)
+# Render reusable spreadsheet viewer per file
+def render_sheet_viewer(fname: str, label: str):
+    st.header(f"📊 {label}")
+    sheets_dict = load_excel_workbook(fname)
 
-# ==============================================================================
-# VIEW 1: SPREADSHEET VIEWER
-# ==============================================================================
-if st.session_state.active_tab == "📊 Spreadsheet Viewer":
-    st.title("⚽ FPL Spreadsheet Viewer")
-    workbooks = load_excel_tables()
+    if not sheets_dict:
+        st.error(f"File `{fname}` was not found in the project root.")
+        return
 
-    if not workbooks:
-        st.error(
-            "Neither `fpl_stats.xlsx` nor `fpl_analytics.xlsx` was found in the project root."
-        )
-    else:
-        st.sidebar.title("📊 File & Sheet Controls")
-        
-        selected_workbook = st.sidebar.radio(
-            "Select Excel File",
-            options=list(workbooks.keys()),
-        )
-        
-        available_sheets = list(workbooks[selected_workbook].keys())
+    st.sidebar.markdown("---")
+    st.sidebar.title(f"📁 {label} Options")
+    available_sheets = list(sheets_dict.keys())
+    selected_sheet = st.sidebar.selectbox(
+        f"Select Sheet / Tab ({label}):",
+        options=available_sheets,
+        key=f"select_sheet_{fname}",
+    )
 
-        selected_sheet = st.sidebar.radio(
-            "Select Tab / Sheet",
-            options=available_sheets,
-        )
+    df = sheets_dict[selected_sheet]
+    st.subheader(f"Current View: {fname} ➔ {selected_sheet}")
 
-        df = workbooks[selected_workbook][selected_sheet]
+    st.sidebar.markdown("### Data Filters")
+    filtered_df = df.copy()
 
-        st.subheader(f"Current View: {selected_workbook} ➔ {selected_sheet}")
+    categorical_cols = filtered_df.select_dtypes(
+        include=["object", "category"]
+    ).columns
 
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("Data Filters")
-        filtered_df = df.copy()
-
-        categorical_cols = filtered_df.select_dtypes(
-            include=["object", "category"]
-        ).columns
+    if len(categorical_cols) > 0:
         for col in categorical_cols:
             unique_vals = filtered_df[col].dropna().unique().tolist()
             selected_vals = st.sidebar.multiselect(
-                f"Filter by {col}", options=unique_vals, default=[]
+                f"Filter {col}",
+                options=unique_vals,
+                default=[],
+                key=f"filter_{fname}_{selected_sheet}_{col}",
             )
             if selected_vals:
                 filtered_df = filtered_df[filtered_df[col].isin(selected_vals)]
 
-        filtered_df = format_percentage_column(filtered_df)
+    filtered_df = format_percentage_column(filtered_df)
 
-        first_col = filtered_df.columns[0] if not filtered_df.empty else None
-        column_config = (
-            {first_col: st.column_config.Column(pinned=True)}
-            if first_col
-            else {}
-        )
+    first_col = filtered_df.columns[0] if not filtered_df.empty else None
+    column_config = (
+        {first_col: st.column_config.Column(pinned=True)}
+        if first_col
+        else {}
+    )
 
-        for col in filtered_df.columns:
-            if "%" in col or "percent" in col.lower():
-                if pd.api.types.is_numeric_dtype(filtered_df[col]):
-                    column_config[col] = st.column_config.NumberColumn(
-                        col, format="%.2f"
-                    )
-
-        is_fpl_stats_file = "fpl_stats.xlsx" in selected_workbook
-        target_sheets = [
-            "GK", "DEF", "MID", "FWD", "Defense", "Attack", "player ownership"
-        ]
-        is_target_sheet = any(
-            t.lower() in selected_sheet.lower() for t in target_sheets
-        )
-
-        if is_fpl_stats_file and is_target_sheet:
-            change_cols = [
-                c for c in filtered_df.columns 
-                if "% change" in c.lower() or "change" in c.lower() or "diff" in c.lower()
-            ]
-            
-            if change_cols:
-                styled_df = filtered_df.style.map(
-                    style_ownership, subset=change_cols
-                ).format(
-                    "{:.2f}",
-                    subset=[
-                        c for c in change_cols if pd.api.types.is_numeric_dtype(filtered_df[c])
-                    ],
+    for col in filtered_df.columns:
+        if "%" in col or "percent" in col.lower():
+            if pd.api.types.is_numeric_dtype(filtered_df[col]):
+                column_config[col] = st.column_config.NumberColumn(
+                    col, format="%.2f"
                 )
-            else:
-                styled_df = filtered_df
+
+    is_fpl_stats_file = "fpl_stats.xlsx" in fname
+    target_sheets = [
+        "GK", "DEF", "MID", "FWD", "Defense", "Attack", "player ownership"
+    ]
+    is_target_sheet = any(
+        t.lower() in selected_sheet.lower() for t in target_sheets
+    )
+
+    if is_fpl_stats_file and is_target_sheet:
+        change_cols = [
+            c for c in filtered_df.columns 
+            if "% change" in c.lower() or "change" in c.lower() or "diff" in c.lower()
+        ]
+        
+        if change_cols:
+            styled_df = filtered_df.style.map(
+                style_ownership, subset=change_cols
+            ).format(
+                "{:.2f}",
+                subset=[
+                    c for c in change_cols if pd.api.types.is_numeric_dtype(filtered_df[c])
+                ],
+            )
         else:
             styled_df = filtered_df
+    else:
+        styled_df = filtered_df
 
-        st.dataframe(
-            styled_df,
-            use_container_width=True,
-            hide_index=True,
-            height=600,
-            column_config=column_config,
-        )
-        st.caption(f"Showing {len(filtered_df)} of {len(df)} total rows")
+    st.dataframe(
+        styled_df,
+        use_container_width=True,
+        hide_index=True,
+        height=650,
+        column_config=column_config,
+    )
+    st.caption(f"Showing {len(filtered_df)} of {len(df)} total rows")
+
+
+# --- SIDEBAR RADIO NAVIGATION ---
+st.sidebar.title("📌 Navigation")
+app_mode = st.sidebar.radio(
+    "Choose View",
+    options=[
+        "📊 FPL Stats (fpl_stats.xlsx)",
+        "📈 FPL Analytics (fpl_analytics.xlsx)",
+        "💬 FPL AI Assistant",
+    ],
+)
 
 # ==============================================================================
-# VIEW 2: MULTI-CHAT AGENT (SHARED ACROSS USERS)
+# VIEW 1: FPL STATS
 # ==============================================================================
-elif st.session_state.active_tab == "💬 FPL AI Assistant":
+if app_mode == "📊 FPL Stats (fpl_stats.xlsx)":
+    render_sheet_viewer("fpl_stats.xlsx", "FPL Stats")
+
+# ==============================================================================
+# VIEW 2: FPL ANALYTICS
+# ==============================================================================
+elif app_mode == "📈 FPL Analytics (fpl_analytics.xlsx)":
+    render_sheet_viewer("fpl_analytics.xlsx", "FPL Analytics")
+
+# ==============================================================================
+# VIEW 3: MULTI-CHAT AI ASSISTANT
+# ==============================================================================
+elif app_mode == "💬 FPL AI Assistant":
+    st.sidebar.markdown("---")
     st.sidebar.title("💬 Shared Chat Threads")
 
     all_threads = load_all_threads()
 
-    # --- CREATE NEW THREAD CONTROL ---
     with st.sidebar.expander("➕ Create New Chat Thread", expanded=False):
-        new_thread_name = st.text_input("Thread Topic Name", placeholder="e.g., GW5 FWD Analysis")
+        new_thread_name = st.text_input("Thread Topic Name", placeholder="e.g., GW5 DEF Analysis")
         if st.button("Create Thread", use_container_width=True):
             if new_thread_name.strip():
                 clean_name = new_thread_name.strip()
@@ -381,7 +383,6 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                 else:
                     st.warning("A thread with that name already exists!")
 
-    # Thread Selection Controls
     thread_names = list(all_threads.keys())
     
     if "active_thread" not in st.session_state or st.session_state.active_thread not in thread_names:
@@ -407,7 +408,6 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
         "Select Model",
         options=list(MODEL_OPTIONS.keys()),
         index=0,
-        help="Choose the Gemini model best suited for your query speed and reasoning needs.",
     )
     selected_model_id = MODEL_OPTIONS[selected_model_label]
 
@@ -480,18 +480,30 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                     context_data = get_routed_context(user_prompt)
 
                     system_instruction = (
-                        "You are a strict, stat-oriented Fantasy Premier League (FPL) Data Analyst.\n\n"
-                        "FORMAT & OUTPUT REQUIREMENTS:\n"
-                        "1. CONCISE & CHAT-SHAREABLE: Minimize fluff/filler text. Structure output cleanly with emojis and concise bullet points so users can easily copy-paste into social chats (e.g. WhatsApp, Discord).\n"
-                        "2. EMPHASIS ON #1 OPTION: Always crown the unambiguous #1 standout option first with an explicit title, followed by their full metric breakdown.\n"
-                        "3. TABLES FOR DATA: Back up every claim with Markdown tables containing exact stats.\n"
-                        "4. SINGLE-LINE TEAM SUMMARIES: Consolidate team-level analysis into brief 1-line bullet summaries.\n\n"
-                        "POSITION-SPECIFIC METRIC SELECTION (FROM ANALYTICS DATASET):\n"
-                        "- FORWARDS (FWD): Focus strictly on `xG`, `xA`, `goals_scored`, `assists`, `total_points`, and `bonus`. (Do NOT use or mention `DC` for Forwards).\n"
-                        "- MIDFIELDERS (MID): Focus heavily on `xG`, `xA`, `goals_scored`, `assists`, `DC`, `total_points`, and `bonus`.\n"
-                        "- DEFENDERS (DEF) & GOALKEEPERS (GK): Focus heavily on `total_points`, `clean_sheets` (cs), `goals_conceded` (gc), `DC`, and `bonus`. (Note: `goals_scored` & `assists` are strictly tiebreakers).\n\n"
-                        "OWNERSHIP DATA (FROM STATS DATASET):\n"
-                        "- Explicitly label ownership values as 'Top 500k Ownership'. Highlight % ownership changes across Gameweeks.\n"
+                        "You are an expert, stat-driven Fantasy Premier League (FPL) Data Analyst.\n\n"
+                        "CONTEXT FROM DATASET (CSV FORMAT WITH ALL ROWS AND COLUMNS):\n"
+                        f"{context_data}\n\n"
+                        "STRICT MANDATES FOR YOUR RESPONSE:\n"
+                        "1. EXHAUSTIVE EVALUATION: Read through the complete CSV data provided across all sheets without omitting players present in the context.\n"
+                        "2. DISPLAY ACTUAL PLAYER NAMES: Map player names correctly from columns (e.g., 'name', 'web_name', or column 0). Never use placeholder names.\n"
+                        "3. ACCURATE STAT MATCHING: Verify points, goals, assists, minutes, and team data for every queried player directly from the loaded CSV string.\n"
+                    )
+
+                    contents_payload = []
+                    for msg in current_thread_messages:
+                        api_role = "user" if msg["role"] == "user" else "model"
+                        contents_payload.append(
+                            types.Content(
+                                role=api_role,
+                                parts=[types.Part.from_text(text=msg["content"])]
+                            )
+                        )
+                    
+                    contents_payload.append(
+                        types.Content(
+                            role="user",
+                            parts=[types.Part.from_text(text=user_prompt)]
+                        )
                     )
 
                     candidate_models = [selected_model_id]
@@ -505,7 +517,7 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
                         try:
                             response_stream = client.models.generate_content_stream(
                                 model=model_id,
-                                contents=f"SPREADSHEET DATA (JSON):\n{context_data}\n\nUSER QUESTION:\n{user_prompt}",
+                                contents=contents_payload,
                                 config=types.GenerateContentConfig(
                                     system_instruction=system_instruction,
                                     temperature=temperature,
@@ -520,7 +532,6 @@ elif st.session_state.active_tab == "💬 FPL AI Assistant":
 
                             full_response = st.write_stream(stream_generator())
 
-                            # Append user message and assistant response to history
                             all_threads[selected_thread].append({"role": "user", "content": user_prompt})
                             all_threads[selected_thread].append({"role": "assistant", "content": full_response})
                             save_all_threads(all_threads)
