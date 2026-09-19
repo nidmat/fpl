@@ -4,3 +4,4 @@ plotly
 google-genai
 openpyxl
 st-copy-button
+tabulate
