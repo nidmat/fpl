@@ -3,6 +3,7 @@ import streamlit as st
 from google.genai import types
 from fpl_utils import (
     apply_custom_theme,
+    render_top_nav,
     get_gemini_client,
     load_all_threads,
     save_all_threads,
@@ -11,7 +12,7 @@ from fpl_utils import (
 )
 
 st.set_page_config(page_title="Ask Me", page_icon="💬", layout="wide")
-apply_custom_theme()
+render_top_nav("chat")
 
 client = get_gemini_client()
 all_threads = load_all_threads()

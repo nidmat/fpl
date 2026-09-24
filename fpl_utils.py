@@ -50,7 +50,103 @@ def apply_custom_theme():
         .stApp {
             color: var(--text-color);
         }
-        
+
+        /* Hide the default multi-page sidebar navigation */
+        [data-testid="stSidebarNav"] {
+            display: none !important;
+        }
+
+        /* Top Horizontal Nav Bar Container separator */
+        .top-nav-container {
+            margin-top: 0.5rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* Style all page_link buttons in the top navbar */
+        div[class*="st-key-nav_"] a[data-testid="stPageLink-NavLink"] {
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+            border-radius: 10px !important;
+            padding: 8px 14px !important;
+            font-size: 0.95rem !important;
+            font-weight: 600 !important;
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+            text-align: center !important;
+            text-decoration: none !important;
+        }
+
+        /* Active Navigation Tab */
+        div[class*="st-key-nav_active"] a[data-testid="stPageLink-NavLink"] {
+            background: rgba(0, 255, 135, 0.16) !important;
+            border: 1.5px solid #00ff87 !important;
+            color: #00ff87 !important;
+            box-shadow: 0 0 14px rgba(0, 255, 135, 0.25) !important;
+        }
+
+        /* Inactive Navigation Tabs */
+        div[class*="st-key-nav_inactive"] a[data-testid="stPageLink-NavLink"] {
+            background: rgba(255, 255, 255, 0.04) !important;
+            border: 1px solid rgba(255, 255, 255, 0.09) !important;
+            color: #d1d5db !important;
+        }
+
+        div[class*="st-key-nav_inactive"] a[data-testid="stPageLink-NavLink"]:hover {
+            background: rgba(255, 255, 255, 0.1) !important;
+            border-color: rgba(0, 255, 135, 0.45) !important;
+            color: #ffffff !important;
+            transform: translateY(-1px) !important;
+        }
+
+        /* Navigation Tiles styling for Home page */
+        div[class*="st-key-tile_"] {
+            background: linear-gradient(145deg, #181c24, #12151b) !important;
+            border: 1px solid rgba(255, 255, 255, 0.08) !important;
+            border-radius: 14px !important;
+            padding: 1.25rem !important;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3) !important;
+        }
+
+        div[class*="st-key-tile_"]:hover {
+            transform: translateY(-4px) !important;
+            border-color: rgba(0, 255, 135, 0.45) !important;
+            box-shadow: 0 10px 28px rgba(0, 255, 135, 0.15) !important;
+        }
+
+        /* Tile inner badges & typography */
+        .tile-badge {
+            display: inline-block;
+            background: rgba(0, 255, 135, 0.12);
+            color: #00ff87;
+            font-size: 0.72rem;
+            font-weight: 700;
+            padding: 3px 9px;
+            border-radius: 20px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .tile-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .tile-desc {
+            font-size: 0.9rem;
+            color: #94a3b8;
+            line-height: 1.5;
+            min-height: 3.8rem;
+            margin-bottom: 1rem;
+        }
+
         /* Styled containers for metrics and assistant cards */
         .fpl-card {
             background-color: var(--secondary-background-color);
@@ -71,10 +167,86 @@ def apply_custom_theme():
         button[data-baseweb="tab"][aria-selected="true"] {
             border-bottom: 3px solid #00ff87 !important;
         }
+        /* Mobile responsive optimizations */
+        @media (max-width: 768px) {
+            /* Keep top nav horizontal with smooth touch swipe/scroll */
+            div[class*="st-key-top_nav_bar"] [data-testid="stHorizontalBlock"] {
+                display: flex !important;
+                flex-direction: row !important;
+                flex-wrap: nowrap !important;
+                overflow-x: auto !important;
+                -webkit-overflow-scrolling: touch !important;
+                gap: 8px !important;
+                padding-bottom: 6px !important;
+                scrollbar-width: none;
+            }
+            div[class*="st-key-top_nav_bar"] [data-testid="stHorizontalBlock"]::-webkit-scrollbar {
+                display: none;
+            }
+
+            div[class*="st-key-top_nav_bar"] [data-testid="column"] {
+                flex: 0 0 auto !important;
+                width: auto !important;
+                min-width: 140px !important;
+            }
+
+            div[class*="st-key-nav_"] a[data-testid="stPageLink-NavLink"] {
+                padding: 8px 12px !important;
+                font-size: 0.85rem !important;
+                white-space: nowrap !important;
+            }
+
+            /* Responsive tiles on mobile */
+            div[class*="st-key-tile_"] {
+                margin-bottom: 12px !important;
+                padding: 1rem !important;
+            }
+
+            .tile-desc {
+                min-height: auto !important;
+                font-size: 0.85rem !important;
+                margin-bottom: 0.75rem !important;
+            }
+
+            .tile-title {
+                font-size: 1.1rem !important;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_top_nav(current_page: str):
+    """
+    Renders horizontal navigation tabs at the top of every page.
+    current_page: 'home' | 'ownership' | 'stats' | 'chat'
+    """
+    apply_custom_theme()
+
+    pages = [
+        {"id": "home", "label": "Home", "icon": "🏠", "path": "Home.py"},
+        {"id": "ownership", "label": "FPL Ownership", "icon": "📊", "path": "pages/1_📊_FPL_Ownership.py"},
+        {"id": "stats", "label": "PL Player Statistics", "icon": "📈", "path": "pages/2_📈_PL_Player_Statistics.py"},
+        {"id": "chat", "label": "Ask Me", "icon": "💬", "path": "pages/3_💬_Ask_Me.py"},
+    ]
+
+    with st.container(key="top_nav_bar"):
+        cols = st.columns(len(pages))
+        for i, p in enumerate(pages):
+            is_active = (p["id"] == current_page)
+            with cols[i]:
+                with st.container(key=f"nav_active_{p['id']}" if is_active else f"nav_inactive_{p['id']}"):
+                    st.page_link(
+                        p["path"],
+                        label=p["label"],
+                        icon=p["icon"],
+                        width="stretch",
+                    )
+
+    st.markdown("<div class='top-nav-container'></div>", unsafe_allow_html=True)
+
 
 
 def get_gemini_client():
