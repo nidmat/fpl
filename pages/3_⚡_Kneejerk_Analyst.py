@@ -1,3 +1,4 @@
+import json
 import time
 import streamlit as st
 from google.genai import types
@@ -11,7 +12,7 @@ from fpl_utils import (
     render_copy_button,
 )
 
-st.set_page_config(page_title="Ask Me", page_icon="💬", layout="wide")
+st.set_page_config(page_title="Kneejerk Analyst", page_icon="⚡", layout="wide")
 render_top_nav("chat")
 
 client = get_gemini_client()
@@ -21,7 +22,7 @@ st.sidebar.markdown("### 💬 Workspaces")
 
 with st.sidebar.expander("➕ New Thread", expanded=False):
     new_thread_name = st.text_input("Thread Name")
-    if st.button("Create", use_container_width=True):
+    if st.button("Create", width="stretch"):
         if new_thread_name.strip():
             clean_name = new_thread_name.strip()
             if clean_name not in all_threads:
@@ -42,6 +43,36 @@ selected_thread = st.sidebar.radio(
     index=thread_names.index(st.session_state.active_thread),
 )
 st.session_state.active_thread = selected_thread
+
+with st.sidebar.expander("💾 Backup & Restore", expanded=False):
+    st.caption("Preserve your threads across app reboots or transfer between devices.")
+    threads_json = json.dumps(all_threads, indent=2)
+    st.download_button(
+        label="📥 Download Threads (JSON)",
+        data=threads_json,
+        file_name=f"fpl_chat_backup_{time.strftime('%Y%m%d_%H%M')}.json",
+        mime="application/json",
+        width="stretch",
+    )
+    st.markdown("<div style='margin-top: 8px;'></div>", unsafe_allow_html=True)
+    uploaded_file = st.file_uploader(
+        "Restore from Backup (.json)",
+        type=["json"],
+        key="chat_backup_uploader",
+    )
+    if uploaded_file is not None:
+        try:
+            imported_threads = json.load(uploaded_file)
+            if isinstance(imported_threads, dict) and imported_threads:
+                all_threads.update(imported_threads)
+                save_all_threads(all_threads)
+                st.sidebar.success(f"Restored {len(imported_threads)} thread(s)!")
+                time.sleep(0.8)
+                st.rerun()
+            else:
+                st.sidebar.error("Invalid backup: expected JSON object.")
+        except Exception as e:
+            st.sidebar.error(f"Failed to restore: {e}")
 
 st.sidebar.markdown("---")
 st.sidebar.title("🤖 Model Configuration")
@@ -81,7 +112,7 @@ top_p = st.sidebar.slider(
 st.sidebar.markdown("---")
 col1, col2 = st.sidebar.columns(2)
 with col1:
-    if st.button("🗑️ Reset Thread", use_container_width=True):
+    if st.button("🗑️ Reset Thread", width="stretch"):
         all_threads[selected_thread] = [
             {
                 "role": "assistant",
@@ -91,11 +122,11 @@ with col1:
         save_all_threads(all_threads)
         st.rerun()
 with col2:
-    if st.button("🧹 Clear Cache", use_container_width=True):
+    if st.button("🧹 Clear Cache", width="stretch"):
         st.cache_data.clear()
         st.success("Cache cleared!")
 
-st.title("🤖 Ask Me")
+st.title("⚡ Kneejerk Analyst")
 st.caption(
     f"Active Thread: **{selected_thread}** | Active Model: **{selected_model_id}**"
 )
@@ -118,8 +149,16 @@ if user_prompt := st.chat_input("Ask a question about the FPL data..."):
             with st.spinner("Fetching data context..."):
                 context_data = get_routed_db_context(user_prompt)
                 system_instruction = (
-                    "You are an expert FPL Data Analyst. Answer using the provided data dumps.\n\n"
-                    f"DATASET CONTEXT:\n{context_data}\n"
+                    "You are the '⚡ Kneejerk Analyst' — an expert, witty, and stat-driven Fantasy Premier League (FPL) Data Analyst.\n\n"
+                    "CONTEXT FROM DATASET (CSV FORMAT WITH ALL ROWS AND COLUMNS):\n"
+                    f"{context_data}\n\n"
+                    "STRICT MANDATES FOR YOUR RESPONSE:\n"
+                    "1. EXHAUSTIVE EVALUATION: Read through the complete CSV data provided across all sheets without omitting players present in the context.\n"
+                    "2. DISPLAY ACTUAL PLAYER NAMES: Map player names correctly from columns (e.g., 'name', 'web_name', or column 0). Never use placeholder names.\n"
+                    "3. ACCURATE STAT MATCHING: Verify points, goals, assists, minutes, and team data for every queried player directly from the loaded CSV string.\n"
+                    "4. SAMPLE SIZE FILTERING: Always check total minutes played and starts before recommending a player or utilizing per-90 metrics. Ignore or heavily discount players with low minutes (e.g., <180–270 minutes or under 2–3 starts) when making transfer recommendations or rank comparisons.\n"
+                    "5. PER 90 RATE NORMALIZATION: Do NOT rely on DC90 (Defensive Contribution per 90), xG90, xA90, xGI90, or saves per 90 for decision-making if a player has limited minutes/starts. Small sample sizes cause severe statistical noise (e.g., a sub getting 1 goal in 15 minutes = 6.00 xG90). Always mention if a high per-90 score is distorted by low minutes, and prioritize absolute totals and regular starters.\n"
+                    "6. WITTY & HUMOROUS DELIVERY: Deliver your analysis with dry football humor, witty banter, and classic FPL tropes (e.g., Pep roulette dread, late-night kneejerk transfers, -8 hit regrets, bench points agony). While your statistics, numbers, and evaluation MUST strictly adhere to mandates 1–5, make your delivery sharp, funny, and entertaining.\n"
                 )
 
                 contents_payload = [

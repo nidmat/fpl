@@ -62,18 +62,18 @@ with col3:
     with st.container(key="tile_chat"):
         st.markdown(
             """
-            <span class="tile-badge">Gemini AI Analyst</span>
-            <div class="tile-title">💬 Ask Me</div>
+            <span class="tile-badge">Gemini AI Advisor</span>
+            <div class="tile-title">⚡ Kneejerk Analyst</div>
             <div class="tile-desc">
-                Chat with an intelligent assistant powered by Google Gemini. Ask tactical queries backed by real-time FPL database tables.
+                Consult your AI assistant before you make that late-night transfer or take a -8 hit. Get instant, data-backed second opinions.
             </div>
             """,
             unsafe_allow_html=True,
         )
         st.page_link(
-            "pages/3_💬_Ask_Me.py",
-            label="Launch AI Chat →",
-            icon="💬",
+            "pages/3_⚡_Kneejerk_Analyst.py",
+            label="Consult Analyst →",
+            icon="⚡",
             width="stretch",
         )
 

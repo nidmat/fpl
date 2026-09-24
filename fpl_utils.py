@@ -6,7 +6,9 @@ import plotly.graph_objects as go
 import streamlit as st
 from google import genai
 
-SHARED_CHAT_FILE = "all_chat_threads.json"
+SHARED_CHAT_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "all_chat_threads.json"
+)
 
 try:
     from st_copy_button import st_copy_button
@@ -270,7 +272,7 @@ def render_top_nav(current_page: str):
         {"id": "home", "label": "Home", "icon": "🏠", "path": "Home.py"},
         {"id": "ownership", "label": "FPL Ownership", "icon": "📊", "path": "pages/1_📊_FPL_Ownership.py"},
         {"id": "stats", "label": "PL Player Statistics", "icon": "📈", "path": "pages/2_📈_PL_Player_Statistics.py"},
-        {"id": "chat", "label": "Ask Me", "icon": "💬", "path": "pages/3_💬_Ask_Me.py"},
+        {"id": "chat", "label": "Kneejerk Analyst", "icon": "⚡", "path": "pages/3_⚡_Kneejerk_Analyst.py"},
     ]
 
     with st.container(key="top_nav_bar"):
@@ -324,6 +326,23 @@ def load_all_threads() -> dict[str, list[dict]]:
         except Exception:
             pass
 
+    # Fallback: check if an existing backup file exists in parent/system paths
+    fallbacks = [
+        "all_chat_threads.json",
+        os.path.join("..", "all_chat_threads.json"),
+        r"C:\FPL\all_chat_threads.json",
+    ]
+    for fallback in fallbacks:
+        if os.path.exists(fallback):
+            try:
+                with open(fallback, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and data:
+                        save_all_threads(data)
+                        return data
+            except Exception:
+                pass
+
     return {
         "General FPL Chat": [
             {
@@ -332,6 +351,7 @@ def load_all_threads() -> dict[str, list[dict]]:
             }
         ]
     }
+
 
 
 def save_all_threads(threads: dict[str, list[dict]]):
