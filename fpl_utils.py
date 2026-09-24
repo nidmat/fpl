@@ -156,44 +156,85 @@ def apply_custom_theme():
             margin-bottom: 12px;
         }
 
-        /* Color-coded Tab System styling */
-        button[data-baseweb="tab"] {
-            border-radius: 6px 6px 0 0 !important;
-            padding: 8px 16px !important;
-            font-weight: 600 !important;
+        /* Color-coded Sheet Tab System: wrap into neat pill rows within the window */
+        div[data-baseweb="tab-list"] {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            gap: 6px !important;
+            max-width: 100% !important;
+            overflow-x: visible !important;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+            padding-bottom: 8px !important;
+            margin-bottom: 12px !important;
         }
-        
+
+        div[data-baseweb="tab-highlight"],
+        div[data-baseweb="tab-border"] {
+            display: none !important;
+        }
+
+        button[data-baseweb="tab"] {
+            border-radius: 8px !important;
+            padding: 6px 14px !important;
+            font-size: 0.85rem !important;
+            font-weight: 600 !important;
+            background: rgba(255, 255, 255, 0.04) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            color: #d1d5db !important;
+            white-space: nowrap !important;
+            margin: 2px 0 !important;
+            transition: all 0.2s ease-in-out !important;
+        }
+
+        button[data-baseweb="tab"]:hover {
+            background: rgba(255, 255, 255, 0.09) !important;
+            border-color: rgba(0, 255, 135, 0.4) !important;
+            color: #ffffff !important;
+        }
+
         /* Active Tab indicator highlight */
         button[data-baseweb="tab"][aria-selected="true"] {
-            border-bottom: 3px solid #00ff87 !important;
+            background: rgba(0, 255, 135, 0.15) !important;
+            border: 1.5px solid #00ff87 !important;
+            color: #00ff87 !important;
+            box-shadow: 0 0 10px rgba(0, 255, 135, 0.2) !important;
         }
+
         /* Mobile responsive optimizations */
         @media (max-width: 768px) {
-            /* Keep top nav horizontal with smooth touch swipe/scroll */
+            /* Top page navigation: 2x2 grid so all 4 buttons are immediately visible without any horizontal sliding */
             div[class*="st-key-top_nav_bar"] [data-testid="stHorizontalBlock"] {
-                display: flex !important;
-                flex-direction: row !important;
-                flex-wrap: nowrap !important;
-                overflow-x: auto !important;
-                -webkit-overflow-scrolling: touch !important;
+                display: grid !important;
+                grid-template-columns: 1fr 1fr !important;
                 gap: 8px !important;
-                padding-bottom: 6px !important;
-                scrollbar-width: none;
-            }
-            div[class*="st-key-top_nav_bar"] [data-testid="stHorizontalBlock"]::-webkit-scrollbar {
-                display: none;
+                width: 100% !important;
+                overflow-x: visible !important;
             }
 
             div[class*="st-key-top_nav_bar"] [data-testid="column"] {
-                flex: 0 0 auto !important;
-                width: auto !important;
-                min-width: 140px !important;
+                width: 100% !important;
+                min-width: 0 !important;
+                flex: 1 1 auto !important;
             }
 
             div[class*="st-key-nav_"] a[data-testid="stPageLink-NavLink"] {
-                padding: 8px 12px !important;
-                font-size: 0.85rem !important;
-                white-space: nowrap !important;
+                padding: 10px 8px !important;
+                font-size: 0.82rem !important;
+                white-space: normal !important;
+                line-height: 1.25 !important;
+                text-align: center !important;
+                justify-content: center !important;
+                min-height: 44px !important;
+            }
+
+            /* Sheet tabs buttons on mobile: wrap compactly */
+            div[data-baseweb="tab-list"] {
+                gap: 5px !important;
+            }
+
+            button[data-baseweb="tab"] {
+                padding: 5px 10px !important;
+                font-size: 0.78rem !important;
             }
 
             /* Responsive tiles on mobile */
