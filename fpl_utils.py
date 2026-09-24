@@ -1569,7 +1569,7 @@ def _render_pl_leaderboards(df: pd.DataFrame, key_prefix: str = "lead"):
 
 
 def _render_pl_analytics_hub(conn):
-    """Unified master visual hub rendering FPL plots & leaderboards."""
+    """Unified master visual hub rendering FPL plots."""
     df_players = _load_combined_players(conn)
 
     chart_option = st.radio(
@@ -1579,8 +1579,7 @@ def _render_pl_analytics_hub(conn):
             "💎 2. Value Matrix (Price vs Points)",
             "🏟️ 3. Team Finishing & xGI Efficiency (xG vs Goals)",
             "🌊 4. Transfer Momentum (Bandwagons)",
-            "🏆 5. Player Leaderboards (Top 15 Rankings)",
-            "🛡️ 6. Defensive Luck & Keeper Bailout (xGC vs GC)",
+            "🛡️ 5. Defensive Luck & Keeper Bailout (xGC vs GC)",
         ],
         horizontal=True,
         key="pl_hub_chart_choice",
@@ -1595,10 +1594,8 @@ def _render_pl_analytics_hub(conn):
         _render_pl_team_finishing_efficiency(conn, key_prefix="hub_p3")
     elif chart_option.startswith("🌊"):
         _render_pl_transfer_momentum(df_players, key_prefix="hub_p4")
-    elif chart_option.startswith("🏆"):
-        _render_pl_leaderboards(df_players, key_prefix="hub_p5_lead")
     elif chart_option.startswith("🛡️"):
-        _render_pl_defensive_luck_bailout(conn, key_prefix="hub_p6_def")
+        _render_pl_defensive_luck_bailout(conn, key_prefix="hub_p5_def")
 
 
 def _format_analytics_table(df: pd.DataFrame):
@@ -1645,9 +1642,8 @@ def render_option2_page(fname: str, label: str):
 
     tab_labels = []
     if is_fpl_analytics:
-        # Prepend the Visual Analytics Hub and Player Leaderboard tabs
+        # Prepend the Visual Analytics Hub tab
         tab_labels.append("📈 Visual Analytics Hub")
-        tab_labels.append("🏆 Player Leaderboards")
 
     for idx, name in enumerate(raw_sheet_names):
         icon = fpl_tab_colors[idx % len(fpl_tab_colors)]
@@ -1655,15 +1651,12 @@ def render_option2_page(fname: str, label: str):
 
     tabs = st.tabs(tab_labels)
 
-    # If fpl_analytics, render Visual Analytics Hub in tab 0 and Leaderboard in tab 1
+    # If fpl_analytics, render Visual Analytics Hub in tab 0
     start_offset = 0
     if is_fpl_analytics:
         with tabs[0]:
             _render_pl_analytics_hub(conn)
-        with tabs[1]:
-            df_all = _load_combined_players(conn)
-            _render_pl_leaderboards(df_all, key_prefix="page_tab_lead")
-        start_offset = 2
+        start_offset = 1
 
     for idx, table_name in enumerate(all_tables):
         current_tab = tabs[idx + start_offset]
