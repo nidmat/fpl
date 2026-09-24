@@ -19,6 +19,7 @@ ENV/
 # Temporary / OS files
 *.tmp
 *.log
+*.db
 .DS_Store
 Thumbs.db
 all_chat_threads.json

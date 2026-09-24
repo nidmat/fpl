@@ -17,8 +17,8 @@ st.markdown(
 
 st.markdown("<div style='margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
 
-# 3 Navigation Tiles
-col1, col2, col3 = st.columns(3)
+# 4 Navigation Tiles
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     with st.container(key="tile_ownership"):
@@ -27,7 +27,7 @@ with col1:
             <span class="tile-badge">Ownership & Transfers</span>
             <div class="tile-title">📊 FPL Ownership</div>
             <div class="tile-desc">
-                Analyze player & team ownership trends across gameweeks. Monitor rising stars, falling differentials, and interactive charts.
+                Analyze player & team ownership trends across gameweeks. Monitor rising stars, differentials, and interactive charts.
             </div>
             """,
             unsafe_allow_html=True,
@@ -44,9 +44,9 @@ with col2:
         st.markdown(
             """
             <span class="tile-badge">Player Metrics</span>
-            <div class="tile-title">📈 PL Player Statistics</div>
+            <div class="tile-title">📈 PL Player Stats</div>
             <div class="tile-desc">
-                Comprehensive data across positions: expected goals (xG), expected assists (xA), bonus points, and attacking/defensive contributions.
+                Comprehensive data across positions: expected goals (xG), xGI efficiency, team finishing, and budget value matrix.
             </div>
             """,
             unsafe_allow_html=True,
@@ -59,19 +59,38 @@ with col2:
         )
 
 with col3:
+    with st.container(key="tile_leaderboard"):
+        st.markdown(
+            """
+            <span class="tile-badge">Rankings & Leaders</span>
+            <div class="tile-title">🏆 Leaderboard</div>
+            <div class="tile-desc">
+                Top 15 rankings across Goals, Assists, G+A, xGI, Clean Sheets, Goals Conceded, DC, and Total Fantasy Points.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.page_link(
+            "pages/3_🏆_Leaderboard.py",
+            label="View Leaderboards →",
+            icon="🏆",
+            width="stretch",
+        )
+
+with col4:
     with st.container(key="tile_chat"):
         st.markdown(
             """
             <span class="tile-badge">Gemini AI Advisor</span>
             <div class="tile-title">⚡ Kneejerk Analyst</div>
             <div class="tile-desc">
-                Consult your AI assistant before you make that late-night transfer or take a -8 hit. Get instant, data-backed second opinions.
+                Consult your AI assistant before you make that late-night transfer or take a -8 hit. Data-backed second opinions.
             </div>
             """,
             unsafe_allow_html=True,
         )
         st.page_link(
-            "pages/3_⚡_Kneejerk_Analyst.py",
+            "pages/4_⚡_Kneejerk_Analyst.py",
             label="Consult Analyst →",
             icon="⚡",
             width="stretch",

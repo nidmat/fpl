@@ -4,6 +4,7 @@ import sqlite3
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import numpy as np
 from google import genai
 
 SHARED_CHAT_FILE = os.path.join(
@@ -264,7 +265,7 @@ def apply_custom_theme():
 def render_top_nav(current_page: str):
     """
     Renders horizontal navigation tabs at the top of every page.
-    current_page: 'home' | 'ownership' | 'stats' | 'chat'
+    current_page: 'home' | 'ownership' | 'stats' | 'leaderboard' | 'chat'
     """
     apply_custom_theme()
 
@@ -272,7 +273,8 @@ def render_top_nav(current_page: str):
         {"id": "home", "label": "Home", "icon": "🏠", "path": "Home.py"},
         {"id": "ownership", "label": "FPL Ownership", "icon": "📊", "path": "pages/1_📊_FPL_Ownership.py"},
         {"id": "stats", "label": "PL Player Statistics", "icon": "📈", "path": "pages/2_📈_PL_Player_Statistics.py"},
-        {"id": "chat", "label": "Kneejerk Analyst", "icon": "⚡", "path": "pages/3_⚡_Kneejerk_Analyst.py"},
+        {"id": "leaderboard", "label": "Leaderboard", "icon": "🏆", "path": "pages/3_🏆_Leaderboard.py"},
+        {"id": "chat", "label": "Kneejerk Analyst", "icon": "⚡", "path": "pages/4_⚡_Kneejerk_Analyst.py"},
     ]
 
     with st.container(key="top_nav_bar"):
@@ -467,7 +469,7 @@ def _render_ownership_charts(df: pd.DataFrame, tab_label: str):
             height=500, margin=dict(t=20, b=40, r=180),
             hovermode="closest",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"chart_own_line_{tab_label}")
 
     # ── Chart 2: Grouped Bar — Ownership % for a selected GW ────────────────
     elif chart_type == "📊 Grouped Bar — GW Comparison":
@@ -497,7 +499,7 @@ def _render_ownership_charts(df: pd.DataFrame, tab_label: str):
             xaxis=dict(tickangle=-35),
             yaxis=dict(range=[0, max(plot_df["_val"]) * 1.18]),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"chart_own_bar_{tab_label}")
 
     # ── Chart 3: Lollipop — % Change for a selected GW ──────────────────────
     elif chart_type == "🍭 Lollipop — % Change":
@@ -544,7 +546,7 @@ def _render_ownership_charts(df: pd.DataFrame, tab_label: str):
             margin=dict(t=20, b=40, r=100, l=130),
             xaxis=dict(zeroline=True, zerolinecolor="rgba(255,255,255,0.4)", zerolinewidth=2),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"chart_own_lolli_{tab_label}")
 
     st.divider()
 
@@ -635,7 +637,7 @@ def _render_player_ownership_charts(df: pd.DataFrame, tab_label: str):
             height=500, margin=dict(t=20, b=40, r=200),
             hovermode="closest",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"chart_pown_line_{tab_label}")
 
     # ── Chart 2: Grouped Bar ──────────────────────────────────────────────────
     elif chart_type == "📊 Grouped Bar — GW Comparison":
@@ -664,7 +666,7 @@ def _render_player_ownership_charts(df: pd.DataFrame, tab_label: str):
             xaxis=dict(tickangle=-40),
             yaxis=dict(range=[0, max(bdf["_val"]) * 1.18]),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"chart_pown_bar_{tab_label}")
 
     # ── Chart 3: Lollipop — % Change ─────────────────────────────────────────
     elif chart_type == "🍭 Lollipop — % Change":
@@ -710,9 +712,911 @@ def _render_player_ownership_charts(df: pd.DataFrame, tab_label: str):
             margin=dict(t=20, b=40, r=100, l=160),
             xaxis=dict(zeroline=True, zerolinecolor="rgba(255,255,255,0.4)", zerolinewidth=2),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"chart_pown_lolli_{tab_label}")
 
     st.divider()
+
+
+_POS_COLORS = {
+    "FWD": "#ff4b4b",  # Coral / Red
+    "MID": "#00ff87",  # FPL Electric Green
+    "DEF": "#00b4d8",  # Sky Blue
+    "GK": "#ffd166",   # Amber / Gold
+}
+
+
+def _load_combined_players(conn) -> pd.DataFrame:
+    """Loads and unifies GK, DEF, MID, FWD from fpl_analytics into a single rich DataFrame."""
+    dfs = []
+    for pos in ["GK", "DEF", "MID", "FWD"]:
+        try:
+            d = pd.read_sql(f"SELECT * FROM fpl_analytics_{pos}", conn)
+            d["Position"] = pos
+            dfs.append(d)
+        except Exception:
+            pass
+
+    if not dfs:
+        return pd.DataFrame()
+
+    df = pd.concat(dfs, ignore_index=True)
+    numeric_cols = [
+        "price", "total points", "form", "gw points", "ppg", "ownership",
+        "trf in", "trf out", "Min", "G", "A", "xG", "xA", "xGI", "xG90", "xA90", "xGI90",
+        "CS", "GC", "Bonus", "bps"
+    ]
+    for c in numeric_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+
+    df["Actual_GI"] = df["G"] + df["A"]
+    df["Delta_xGI"] = (df["Actual_GI"] - df["xGI"]).round(2)
+    df["Delta_xG"] = (df["G"] - df["xG"]).round(2)
+    df["net_transfers"] = df["trf in"] - df["trf out"]
+    safe_price = df["price"].replace(0, np.nan)
+    df["PPM"] = (df["total points"] / safe_price).fillna(0).round(2)
+    return df
+
+
+def _render_pl_underlying_stats(df: pd.DataFrame, key_prefix: str = "hub"):
+    """Chart 1: Underlying Stats & Unlucky Buys (xG / xGI vs Actual Return)."""
+    st.markdown("### 🎯 Underlying Stats vs Reality: The 'Unlucky Buys' & Regression Detector")
+    st.caption("Compare expected returns (xGI/xG) against actual returns. Players below the diagonal line are underperforming their underlying numbers (unlucky, prime buy targets), while players above are riding a hot finishing streak (clinical / due regression).")
+
+    m_col1, m_col2 = st.columns([2, 3])
+    with m_col1:
+        metric_choice = st.radio(
+            "Metric Mode",
+            options=["🎯 xGI vs Goal Involvements (G + A)", "⚽ xG vs Actual Goals (G)"],
+            horizontal=True,
+            key=f"{key_prefix}_und_metric",
+        )
+    is_xgi = "xGI" in metric_choice
+    x_col = "xGI" if is_xgi else "xG"
+    y_col = "Actual_GI" if is_xgi else "G"
+    delta_col = "Delta_xGI" if is_xgi else "Delta_xG"
+    x_title = "Expected Goal Involvement (xGI)" if is_xgi else "Expected Goals (xG)"
+    y_title = "Actual Goal Involvements (Goals + Assists)" if is_xgi else "Actual Goals (G)"
+
+    # Filters
+    f1, f2, f3, f4 = st.columns([1.5, 1.5, 2, 1.5])
+    with f1:
+        pos_opts = [p for p in ["FWD", "MID", "DEF", "GK"] if p in df["Position"].unique()]
+        sel_pos = st.multiselect("Position", options=pos_opts, default=[p for p in ["FWD", "MID", "DEF"] if p in pos_opts], key=f"{key_prefix}_und_pos")
+    with f2:
+        team_opts = sorted(df["Team"].dropna().unique().tolist())
+        sel_teams = st.multiselect("Team", options=team_opts, default=[], key=f"{key_prefix}_und_team")
+    with f3:
+        max_mins = int(df["Min"].max()) if not df.empty else 1000
+        min_mins = st.slider("Min Minutes Played", 0, max_mins, min(180, max_mins), step=45, key=f"{key_prefix}_und_mins")
+    with f4:
+        min_p = float(df["price"].min()) if not df.empty else 4.0
+        max_p = float(df["price"].max()) if not df.empty else 15.0
+        price_range = st.slider("Price (£m)", min_p, max_p, (min_p, max_p), step=0.1, key=f"{key_prefix}_und_price")
+
+    fdf = df.copy()
+    if sel_pos:
+        fdf = fdf[fdf["Position"].isin(sel_pos)]
+    if sel_teams:
+        fdf = fdf[fdf["Team"].isin(sel_teams)]
+    fdf = fdf[(fdf["Min"] >= min_mins) & (fdf["price"] >= price_range[0]) & (fdf["price"] <= price_range[1])]
+
+    if fdf.empty:
+        st.warning("No players match the current filters.")
+        return
+
+    max_val = max(fdf[x_col].max(), fdf[y_col].max(), 1.0) * 1.08
+    fig = go.Figure()
+
+    # 45-degree reference line
+    fig.add_trace(go.Scatter(
+        x=[0, max_val], y=[0, max_val],
+        mode="lines",
+        line=dict(color="rgba(255, 255, 255, 0.35)", dash="dash", width=1.5),
+        name="Expected = Actual",
+        hoverinfo="skip",
+    ))
+
+    # Scatter traces per position
+    for pos in ["FWD", "MID", "DEF", "GK"]:
+        pdf = fdf[fdf["Position"] == pos]
+        if pdf.empty:
+            continue
+        color = _POS_COLORS.get(pos, "#ffffff")
+        sizes = np.clip(pdf["total points"] * 0.35 + 7, 7, 22)
+        fig.add_trace(go.Scatter(
+            x=pdf[x_col],
+            y=pdf[y_col],
+            mode="markers",
+            name=f"{pos} ({len(pdf)})",
+            marker=dict(
+                size=sizes,
+                color=color,
+                opacity=0.85,
+                line=dict(width=1, color="white"),
+            ),
+            hovertext=pdf["Name"],
+            customdata=list(zip(pdf["Position"], pdf["Team"], pdf["price"], pdf["Min"], pdf[delta_col], pdf["total points"])),
+            hovertemplate="<b>%{hovertext}</b> (%{customdata[0]}) · %{customdata[1]}<br>"
+                          "Price: £%{customdata[2]:.1f}m | Minutes: %{customdata[3]} | Pts: %{customdata[5]}<br>"
+                          f"{x_title}: <b>%{{x:.2f}}</b><br>"
+                          f"{y_title}: <b>%{{y}}</b><br>"
+                          "Delta (Actual - Exp): <b>%{customdata[4]:+.2f}</b><extra></extra>",
+        ))
+
+    # Visual annotations for quadrants
+    fig.add_annotation(
+        x=max_val * 0.22, y=max_val * 0.90,
+        text="🔴 Overperforming (Clinical / Due Regression)",
+        showarrow=False,
+        font=dict(color="#ff6b6b", size=11),
+        bgcolor="rgba(255, 107, 107, 0.12)",
+        bordercolor="rgba(255, 107, 107, 0.3)",
+        borderpad=5,
+    )
+    fig.add_annotation(
+        x=max_val * 0.78, y=max_val * 0.12,
+        text="🟢 Underperforming (Unlucky / Buy Target)",
+        showarrow=False,
+        font=dict(color="#00ff87", size=11),
+        bgcolor="rgba(0, 255, 135, 0.12)",
+        bordercolor="rgba(0, 255, 135, 0.3)",
+        borderpad=5,
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        xaxis_title=x_title,
+        yaxis_title=y_title,
+        height=540,
+        margin=dict(t=30, b=40, l=50, r=30),
+        legend=dict(orientation="h", y=1.06, x=0.01),
+        hovermode="closest",
+    )
+    st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_underlying_chart")
+
+    # Key takeaway cards
+    st.markdown("#### 🔍 Key Takeaways")
+    c_unlucky, c_clinical = st.columns(2)
+    unlucky_top = fdf.sort_values(delta_col, ascending=True).head(3)
+    clinical_top = fdf.sort_values(delta_col, ascending=False).head(3)
+
+    with c_unlucky:
+        st.markdown("**🟢 Top 3 Underperforming (Prime 'Buy Low' Targets):**")
+        for _, r in unlucky_top.iterrows():
+            st.markdown(
+                f"- **{r['Name']}** ({r['Team']} · {r['Position']}) — "
+                f"Exp: `{r[x_col]:.2f}` vs Act: `{int(r[y_col])}` | "
+                f"**Delta: `{r[delta_col]:+.2f}`** (£{r['price']:.1f}m)"
+            )
+
+    with c_clinical:
+        st.markdown("**🔴 Top 3 Overperforming (Clinical Finishers / Regression Risk):**")
+        for _, r in clinical_top.iterrows():
+            st.markdown(
+                f"- **{r['Name']}** ({r['Team']} · {r['Position']}) — "
+                f"Exp: `{r[x_col]:.2f}` vs Act: `{int(r[y_col])}` | "
+                f"**Delta: `{r[delta_col]:+.2f}`** (£{r['price']:.1f}m)"
+            )
+
+
+def _render_pl_value_matrix(df: pd.DataFrame, key_prefix: str = "hub"):
+    """Chart 2: The Value & Budget Gem Matrix (Price vs Points / PPM)."""
+    st.markdown("### 💎 The Value & Budget Gem Matrix")
+    st.caption("Identify high-efficiency budget enablers (top-left), dependable premiums (top-right), and avoid overpriced underperformers (bottom-right).")
+
+    v1, v2 = st.columns([2, 2])
+    with v1:
+        y_metric = st.radio(
+            "Y-Axis Return Metric",
+            options=["Total Points", "Points Per Game (PPG)", "Points Per Million (PPM)"],
+            horizontal=True,
+            key=f"{key_prefix}_val_ymetric",
+        )
+    with v2:
+        size_metric = st.radio(
+            "Marker Size Scaled By",
+            options=["Form", "Ownership %", "Minutes"],
+            horizontal=True,
+            key=f"{key_prefix}_val_size",
+        )
+
+    y_col_map = {"Total Points": "total points", "Points Per Game (PPG)": "ppg", "Points Per Million (PPM)": "PPM"}
+    y_col = y_col_map[y_metric]
+
+    size_col_map = {"Form": "form", "Ownership %": "ownership", "Minutes": "Min"}
+    s_col = size_col_map[size_metric]
+
+    # Filters
+    f1, f2, f3, f4 = st.columns([1.5, 1.5, 2, 1.5])
+    with f1:
+        pos_opts = [p for p in ["FWD", "MID", "DEF", "GK"] if p in df["Position"].unique()]
+        sel_pos = st.multiselect("Position", options=pos_opts, default=pos_opts, key=f"{key_prefix}_val_pos")
+    with f2:
+        team_opts = sorted(df["Team"].dropna().unique().tolist())
+        sel_teams = st.multiselect("Team", options=team_opts, default=[], key=f"{key_prefix}_val_team")
+    with f3:
+        max_mins = int(df["Min"].max()) if not df.empty else 1000
+        min_mins = st.slider("Min Minutes Played", 0, max_mins, min(90, max_mins), step=45, key=f"{key_prefix}_val_mins")
+    with f4:
+        min_p = float(df["price"].min()) if not df.empty else 4.0
+        max_p = float(df["price"].max()) if not df.empty else 15.0
+        price_range = st.slider("Price Range (£m)", min_p, max_p, (min_p, max_p), step=0.1, key=f"{key_prefix}_val_price")
+
+    fdf = df.copy()
+    if sel_pos:
+        fdf = fdf[fdf["Position"].isin(sel_pos)]
+    if sel_teams:
+        fdf = fdf[fdf["Team"].isin(sel_teams)]
+    fdf = fdf[(fdf["Min"] >= min_mins) & (fdf["price"] >= price_range[0]) & (fdf["price"] <= price_range[1])]
+
+    if fdf.empty:
+        st.warning("No players match the current filters.")
+        return
+
+    med_price = fdf["price"].median()
+    med_y = fdf[y_col].median()
+
+    fig = go.Figure()
+
+    # Median Benchmark Lines
+    fig.add_vline(x=med_price, line_dash="dash", line_color="rgba(255, 255, 255, 0.25)", annotation_text=f"Med Price: £{med_price:.1f}m", annotation_position="top")
+    fig.add_hline(y=med_y, line_dash="dash", line_color="rgba(255, 255, 255, 0.25)", annotation_text=f"Med {y_metric}: {med_y:.1f}", annotation_position="right")
+
+    for pos in ["FWD", "MID", "DEF", "GK"]:
+        pdf = fdf[fdf["Position"] == pos]
+        if pdf.empty:
+            continue
+        color = _POS_COLORS.get(pos, "#ffffff")
+        sizes = np.clip(pdf[s_col] * (1.8 if s_col == "form" else 0.5 if s_col == "ownership" else 0.015) + 6, 6, 24)
+        fig.add_trace(go.Scatter(
+            x=pdf["price"],
+            y=pdf[y_col],
+            mode="markers",
+            name=f"{pos} ({len(pdf)})",
+            marker=dict(
+                size=sizes,
+                color=color,
+                opacity=0.85,
+                line=dict(width=1, color="white"),
+            ),
+            hovertext=pdf["Name"],
+            customdata=list(zip(pdf["Position"], pdf["Team"], pdf["total points"], pdf["ppg"], pdf["PPM"], pdf["form"], pdf["ownership"])),
+            hovertemplate="<b>%{hovertext}</b> (%{customdata[0]}) · %{customdata[1]}<br>"
+                          "Price: £%{x:.1f}m | Total Points: %{customdata[2]}<br>"
+                          "PPG: %{customdata[3]:.1f} | PPM: %{customdata[4]:.2f} pts/£m<br>"
+                          "Form: %{customdata[5]} | Ownership: %{customdata[6]}%<extra></extra>",
+        ))
+
+    # Quadrant corner labels
+    x_min, x_max = fdf["price"].min(), fdf["price"].max()
+    y_min, y_max = fdf[y_col].min(), fdf[y_col].max()
+    fig.add_annotation(x=x_min + (med_price - x_min) * 0.3, y=y_max * 0.95, text="🌟 Budget Gems", showarrow=False, font=dict(color="#00ff87", size=12, family="sans-serif"), bgcolor="rgba(0, 255, 135, 0.1)")
+    fig.add_annotation(x=med_price + (x_max - med_price) * 0.7, y=y_max * 0.95, text="👑 Elite Premiums", showarrow=False, font=dict(color="#ffd166", size=12, family="sans-serif"), bgcolor="rgba(255, 209, 102, 0.1)")
+    fig.add_annotation(x=med_price + (x_max - med_price) * 0.7, y=y_min + (med_y - y_min) * 0.2, text="⚠️ Overpriced / Traps", showarrow=False, font=dict(color="#ff4b4b", size=12, family="sans-serif"), bgcolor="rgba(255, 75, 75, 0.1)")
+    fig.add_annotation(x=x_min + (med_price - x_min) * 0.3, y=y_min + (med_y - y_min) * 0.2, text="🪑 Cheap Bench", showarrow=False, font=dict(color="#94a3b8", size=12, family="sans-serif"), bgcolor="rgba(148, 163, 184, 0.1)")
+
+    fig.update_layout(
+        template="plotly_dark",
+        xaxis_title="Price (£m)",
+        yaxis_title=y_metric,
+        height=540,
+        margin=dict(t=30, b=40, l=50, r=30),
+        legend=dict(orientation="h", y=1.06, x=0.01),
+        hovermode="closest",
+    )
+    st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_value_matrix_chart")
+
+    # Key Takeaways
+    st.markdown("#### 🔍 Value Spotlights")
+    c1, c2 = st.columns(2)
+    # Budget gems: outfield <= 6.0m or GK <= 4.5m
+    gems_filter = ((fdf["Position"] != "GK") & (fdf["price"] <= 6.0)) | ((fdf["Position"] == "GK") & (fdf["price"] <= 4.5))
+    top_gems = fdf[gems_filter].sort_values("total points", ascending=False).head(3)
+    top_ppm = fdf.sort_values("PPM", ascending=False).head(3)
+
+    with c1:
+        st.markdown("**🌟 Top 3 Budget Enablers (Highest Points $\le$ £6.0m):**")
+        for _, r in top_gems.iterrows():
+            st.markdown(f"- **{r['Name']}** ({r['Team']} · {r['Position']}) — **{int(r['total points'])} pts** at **£{r['price']:.1f}m** (PPG: `{r['ppg']:.1f}`, PPM: `{r['PPM']:.2f}`)")
+
+    with c2:
+        st.markdown("**💰 Top 3 Value Efficiency Kings (Highest Points Per Million):**")
+        for _, r in top_ppm.iterrows():
+            st.markdown(f"- **{r['Name']}** ({r['Team']} · {r['Position']}) — **{r['PPM']:.2f} pts/£m** ({int(r['total points'])} pts · £{r['price']:.1f}m)")
+
+
+def _render_pl_team_finishing_efficiency(conn, key_prefix: str = "hub"):
+    """Chart 3: Team Finishing Efficiency & Regression (Team xG vs Goals & xGI vs Involvements)."""
+    st.markdown("### 🏟️ Team Finishing Efficiency & Regression (Team xGI vs Actual Returns)")
+    st.caption("Compare team expected output (xG / xGI) against real goal returns across the league. Identify which attacks are underperforming (unlucky coiled springs due a scoring burst) and which are overperforming (clinical / regression risk).")
+
+    c1, c2, c3 = st.columns([2, 2, 2])
+    with c1:
+        metric_choice = st.radio(
+            "Metric Mode",
+            options=["⚽ Expected Goals (xG) vs Actual Goals", "⚡ Expected Involvements (xGI) vs Actual (G + A)"],
+            horizontal=True,
+            key=f"{key_prefix}_team_fin_metric",
+        )
+    with c2:
+        venue_choice = st.radio(
+            "Venue Split",
+            options=["🏟️ Overall (All Matches)", "🏠 Home Matches Only", "✈️ Away Matches Only"],
+            horizontal=True,
+            key=f"{key_prefix}_team_fin_venue",
+        )
+    with c3:
+        view_mode = st.radio(
+            "Display Format",
+            options=["📊 Side-by-Side Comparison", "⚖️ Finishing Delta (Actual - Expected)"],
+            horizontal=True,
+            key=f"{key_prefix}_team_fin_view",
+        )
+
+    table_map = {
+        "🏟️ Overall (All Matches)": "fpl_analytics_TEAM_STATS",
+        "🏠 Home Matches Only": "fpl_analytics_TEAM_STATS_HOME",
+        "✈️ Away Matches Only": "fpl_analytics_TEAM_STATS_AWAY",
+    }
+    table_name = table_map[venue_choice]
+
+    try:
+        tdf = pd.read_sql(f"SELECT * FROM `{table_name}`", conn)
+    except Exception as e:
+        st.error(f"Failed to load table `{table_name}`: {e}")
+        return
+
+    # Ensure numeric types
+    for col in ["Goals", "Assists", "xG", "xA", "xGI"]:
+        if col in tdf.columns:
+            tdf[col] = pd.to_numeric(tdf[col], errors="coerce").fillna(0)
+
+    is_xgi = "xGI" in metric_choice
+    exp_col = "xGI" if is_xgi else "xG"
+    tdf["Actual_Val"] = (tdf["Goals"] + tdf["Assists"]) if is_xgi else tdf["Goals"]
+    tdf["Delta"] = (tdf["Actual_Val"] - tdf[exp_col]).round(2)
+    exp_label = "Expected Goal Involvement (xGI)" if is_xgi else "Expected Goals (xG)"
+    act_label = "Actual Involvements (G + A)" if is_xgi else "Actual Goals (G)"
+
+    if "Side-by-Side" in view_mode:
+        tdf_sorted = tdf.sort_values(exp_col, ascending=False)
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=tdf_sorted["Team"],
+            y=tdf_sorted[exp_col],
+            name=exp_label,
+            marker_color="#00b4d8",
+            text=[f"{v:.1f}" for v in tdf_sorted[exp_col]],
+            textposition="outside",
+            customdata=list(zip(tdf_sorted["Actual_Val"], tdf_sorted["Delta"])),
+            hovertemplate="<b>%{x}</b><br>"
+                          f"{exp_label}: <b>%{{y:.2f}}</b><br>"
+                          f"{act_label}: <b>%{{customdata[0]}}</b><br>"
+                          "Finishing Delta: <b>%{customdata[1]:+.2f}</b><extra></extra>",
+        ))
+        fig.add_trace(go.Bar(
+            x=tdf_sorted["Team"],
+            y=tdf_sorted["Actual_Val"],
+            name=act_label,
+            marker_color="#00ff87",
+            text=[f"{int(v)}" for v in tdf_sorted["Actual_Val"]],
+            textposition="outside",
+            customdata=list(zip(tdf_sorted[exp_col], tdf_sorted["Delta"])),
+            hovertemplate="<b>%{x}</b><br>"
+                          f"{act_label}: <b>%{{y}}</b><br>"
+                          f"{exp_label}: <b>%{{customdata[0]:.2f}}</b><br>"
+                          "Finishing Delta: <b>%{customdata[1]:+.2f}</b><extra></extra>",
+        ))
+        fig.update_layout(
+            barmode="group",
+            template="plotly_dark",
+            xaxis_title="Team",
+            yaxis_title="Count / Value",
+            height=520,
+            margin=dict(t=30, b=40, l=50, r=30),
+            legend=dict(orientation="h", y=1.06, x=0.01),
+        )
+        st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_team_fin_grouped_chart")
+
+    else:
+        tdf_sorted = tdf.sort_values("Delta", ascending=True)
+        bar_colors = ["#00ff87" if v >= 0 else "#ff4b4b" for v in tdf_sorted["Delta"]]
+        fig = go.Figure(go.Bar(
+            y=tdf_sorted["Team"],
+            x=tdf_sorted["Delta"],
+            orientation="h",
+            marker_color=bar_colors,
+            text=[f"{v:+.2f}" for v in tdf_sorted["Delta"]],
+            textposition="outside",
+            customdata=list(zip(tdf_sorted[exp_col], tdf_sorted["Actual_Val"])),
+            hovertemplate="<b>%{y}</b><br>"
+                          "Finishing Delta (Act - Exp): <b>%{x:+.2f}</b><br>"
+                          f"{exp_label}: <b>%{{customdata[0]:.2f}}</b><br>"
+                          f"{act_label}: <b>%{{customdata[1]}}</b><extra></extra>",
+        ))
+        fig.update_layout(
+            template="plotly_dark",
+            xaxis_title=f"Finishing Delta ({act_label} minus {exp_label})",
+            yaxis_title="Team",
+            height=max(500, len(tdf_sorted) * 26),
+            margin=dict(t=20, b=40, l=80, r=80),
+            xaxis=dict(zeroline=True, zerolinecolor="rgba(255,255,255,0.4)", zerolinewidth=2),
+        )
+        st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_team_fin_delta_chart")
+
+    # Key Takeaways
+    st.markdown("#### 🔍 Tactical Insights: Who to Target")
+    c_unlucky, c_clinical = st.columns(2)
+    top_unlucky = tdf.sort_values("Delta", ascending=True).head(3)
+    top_clinical = tdf.sort_values("Delta", ascending=False).head(3)
+
+    with c_unlucky:
+        st.markdown("**🟢 Top 3 Underperforming Attacks (Unlucky / 'Buy Low' Fixtures):**")
+        for _, r in top_unlucky.iterrows():
+            st.markdown(
+                f"- **{r['Team']}** — Exp: `{r[exp_col]:.2f}` vs Act: `{int(r['Actual_Val'])}` | "
+                f"**Delta: `{r['Delta']:+.2f}`** (High chance creation, finishing slump due to break!)"
+            )
+    with c_clinical:
+        st.markdown("**🔴 Top 3 Overperforming Attacks (Clinical Finishers / Due Regression):**")
+        for _, r in top_clinical.iterrows():
+            st.markdown(
+                f"- **{r['Team']}** — Exp: `{r[exp_col]:.2f}` vs Act: `{int(r['Actual_Val'])}` | "
+                f"**Delta: `{r['Delta']:+.2f}`** (Scoring significantly above underlying chance quality)"
+            )
+
+
+def _render_pl_transfer_momentum(df: pd.DataFrame, key_prefix: str = "hub"):
+    """Chart 4: Transfer Bandwagon & Price Momentum (Net Transfers)."""
+    st.markdown("### 🌊 Transfer Bandwagon & Price Momentum")
+    st.caption("Monitor net community transfers (Transfers In minus Transfers Out) to jump onto high-performing bandwagons or offload falling assets before price drops.")
+
+    c1, c2, c3 = st.columns([2, 1.5, 2.5])
+    with c1:
+        view_mode = st.radio(
+            "View Format",
+            options=["📊 Diverging Bar Chart (Top Inflows vs Outflows)", "📈 Scatter Plot (Net Transfers vs Form)"],
+            horizontal=True,
+            key=f"{key_prefix}_trf_view",
+        )
+    with c2:
+        top_n = st.selectbox("Top N Players", options=[10, 15, 20], index=1, key=f"{key_prefix}_trf_topn")
+    with c3:
+        pos_opts = [p for p in ["FWD", "MID", "DEF", "GK"] if p in df["Position"].unique()]
+        sel_pos = st.multiselect("Filter Position", options=pos_opts, default=pos_opts, key=f"{key_prefix}_trf_pos")
+
+    fdf = df.copy()
+    if sel_pos:
+        fdf = fdf[fdf["Position"].isin(sel_pos)]
+
+    if fdf.empty:
+        st.warning("No players match the current filters.")
+        return
+
+    top_in = fdf.sort_values("net_transfers", ascending=False).head(top_n)
+    top_out = fdf.sort_values("net_transfers", ascending=True).head(top_n)
+
+    if "Diverging Bar" in view_mode:
+        combined = pd.concat([top_out, top_in]).sort_values("net_transfers", ascending=True)
+        bar_colors = ["#00ff87" if v >= 0 else "#ff4b4b" for v in combined["net_transfers"]]
+        bar_text = [f"+{v/1000:,.0f}k" if v >= 0 else f"{v/1000:,.0f}k" for v in combined["net_transfers"]]
+
+        fig = go.Figure(go.Bar(
+            y=combined["Name"] + " (" + combined["Team"] + " · " + combined["Position"] + ")",
+            x=combined["net_transfers"],
+            orientation="h",
+            marker_color=bar_colors,
+            text=bar_text,
+            textposition="outside",
+            customdata=list(zip(combined["Position"], combined["Team"], combined["trf in"], combined["trf out"], combined["price"], combined["form"])),
+            hovertemplate="<b>%{y}</b><br>"
+                          "Net Transfers: <b>%{x:,}</b><br>"
+                          "Transfers In: <b>%{customdata[2]:,}</b><br>"
+                          "Transfers Out: <b>%{customdata[3]:,}</b><br>"
+                          "Price: £%{customdata[4]:.1f}m | Form: %{customdata[5]}<extra></extra>",
+        ))
+        fig.update_layout(
+            template="plotly_dark",
+            xaxis_title="Net Transfers (In - Out)",
+            yaxis_title="Player",
+            height=max(500, len(combined) * 24),
+            margin=dict(t=20, b=40, l=180, r=90),
+            xaxis=dict(zeroline=True, zerolinecolor="rgba(255,255,255,0.4)", zerolinewidth=2),
+        )
+        st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_trf_bar_chart")
+
+    else:
+        fig = go.Figure()
+        for pos in ["FWD", "MID", "DEF", "GK"]:
+            pdf = fdf[fdf["Position"] == pos]
+            if pdf.empty:
+                continue
+            color = _POS_COLORS.get(pos, "#ffffff")
+            fig.add_trace(go.Scatter(
+                x=pdf["net_transfers"],
+                y=pdf["form"],
+                mode="markers",
+                name=f"{pos} ({len(pdf)})",
+                marker=dict(size=9, color=color, opacity=0.85, line=dict(width=1, color="white")),
+                hovertext=pdf["Name"],
+                customdata=list(zip(pdf["Position"], pdf["Team"], pdf["price"], pdf["total points"], pdf["trf in"], pdf["trf out"])),
+                hovertemplate="<b>%{hovertext}</b> (%{customdata[0]}) · %{customdata[1]}<br>"
+                              "Net Transfers: <b>%{x:,}</b><br>"
+                              "Form: <b>%{y}</b> | Total Pts: %{customdata[3]}<br>"
+                              "Price: £%{customdata[2]:.1f}m<extra></extra>",
+            ))
+        fig.add_vline(x=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+        fig.update_layout(
+            template="plotly_dark",
+            xaxis_title="Net Transfers (In - Out)",
+            yaxis_title="Player Form (Points per Match)",
+            height=500,
+            margin=dict(t=30, b=40, l=50, r=30),
+            legend=dict(orientation="h", y=1.06, x=0.01),
+        )
+        st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_trf_scatter_chart")
+
+    # Key Takeaways
+    st.markdown("#### 🔍 Bandwagon Radar")
+    c_hot, c_cold = st.columns(2)
+    with c_hot:
+        st.markdown("**🚀 Top 3 Most Bought Players (Price Rise Watch):**")
+        for _, r in top_in.head(3).iterrows():
+            st.markdown(f"- **{r['Name']}** ({r['Team']} · {r['Position']}) — **`+{r['net_transfers']:,}`** net transfers (Form: `{r['form']}`, Price: `£{r['price']:.1f}m`)")
+    with c_cold:
+        st.markdown("**🧊 Top 3 Most Sold Players (Price Fall Watch):**")
+        for _, r in top_out.head(3).iterrows():
+            st.markdown(f"- **{r['Name']}** ({r['Team']} · {r['Position']}) — **`{r['net_transfers']:,}`** net transfers (Form: `{r['form']}`, Price: `£{r['price']:.1f}m`)")
+
+
+def _render_pl_defensive_luck_bailout(conn, key_prefix: str = "hub"):
+    """Chart 5: Defensive Luck & Keeper Bailout (Team xGC vs GC & Clean Sheets)."""
+    st.markdown("### 🛡️ Defensive Luck & Keeper Bailout (xGC vs Goals Conceded)")
+    st.caption("Evaluate which defenses are genuinely solid, which are getting bailed out by heroic goalkeeping, and which are leaking goals beyond expected chance quality.")
+
+    c1, c2 = st.columns([2, 2])
+    with c1:
+        view_mode = st.radio(
+            "Display Mode",
+            options=["🧤 Goals Prevented (Keeper Bailout Delta)", "📊 Side-by-Side (xGC vs GC)"],
+            horizontal=True,
+            key=f"{key_prefix}_def_luck_view",
+        )
+    with c2:
+        venue_choice = st.radio(
+            "Venue Split",
+            options=["🏟️ Overall (All Matches)", "🏠 Home Matches Only", "✈️ Away Matches Only"],
+            horizontal=True,
+            key=f"{key_prefix}_def_luck_venue",
+        )
+
+    table_map = {
+        "🏟️ Overall (All Matches)": "fpl_analytics_TEAM_STATS",
+        "🏠 Home Matches Only": "fpl_analytics_TEAM_STATS_HOME",
+        "✈️ Away Matches Only": "fpl_analytics_TEAM_STATS_AWAY",
+    }
+    table_name = table_map[venue_choice]
+
+    try:
+        tdf = pd.read_sql(f"SELECT * FROM `{table_name}`", conn)
+    except Exception as e:
+        st.error(f"Failed to load table `{table_name}`: {e}")
+        return
+
+    for col in ["GC", "xGC", "CS", "Saves"]:
+        if col in tdf.columns:
+            tdf[col] = pd.to_numeric(tdf[col], errors="coerce").fillna(0)
+
+    # Goals Prevented = xGC - GC (Positive = Keeper saved more goals than expected / bailed out)
+    tdf["Goals_Prevented"] = (tdf["xGC"] - tdf["GC"]).round(2)
+
+    if "Goals Prevented" in view_mode:
+        tdf_sorted = tdf.sort_values("Goals_Prevented", ascending=True)
+        bar_colors = ["#00ff87" if v >= 0 else "#ff4b4b" for v in tdf_sorted["Goals_Prevented"]]
+
+        fig = go.Figure(go.Bar(
+            y=tdf_sorted["Team"],
+            x=tdf_sorted["Goals_Prevented"],
+            orientation="h",
+            marker_color=bar_colors,
+            text=[f"{v:+.2f} ({int(cs)} CS)" for v, cs in zip(tdf_sorted["Goals_Prevented"], tdf_sorted["CS"])],
+            textposition="outside",
+            customdata=list(zip(tdf_sorted["xGC"], tdf_sorted["GC"], tdf_sorted["CS"], tdf_sorted["Saves"])),
+            hovertemplate="<b>%{y}</b><br>"
+                          "Goals Prevented (xGC - GC): <b>%{x:+.2f}</b><br>"
+                          "Expected GC: <b>%{customdata[0]:.2f}</b> | Actual GC: <b>%{customdata[1]}</b><br>"
+                          "Clean Sheets: <b>%{customdata[2]}</b> | Saves: <b>%{customdata[3]}</b><extra></extra>",
+        ))
+        fig.update_layout(
+            template="plotly_dark",
+            xaxis_title="Goals Prevented (xGC - Actual GC) — Positive = Goalkeeper Bailout",
+            yaxis_title="Team",
+            height=max(500, len(tdf_sorted) * 26),
+            margin=dict(t=20, b=40, l=80, r=110),
+            xaxis=dict(zeroline=True, zerolinecolor="rgba(255,255,255,0.4)", zerolinewidth=2),
+        )
+        st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_def_prevented_chart")
+
+    else:
+        tdf_sorted = tdf.sort_values("xGC", ascending=True)
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=tdf_sorted["Team"],
+            y=tdf_sorted["xGC"],
+            name="Expected Goals Conceded (xGC)",
+            marker_color="#ffd166",
+            text=[f"{v:.1f}" for v in tdf_sorted["xGC"]],
+            textposition="outside",
+            customdata=list(zip(tdf_sorted["GC"], tdf_sorted["CS"], tdf_sorted["Saves"])),
+            hovertemplate="<b>%{x}</b><br>"
+                          "xGC: <b>%{y:.2f}</b><br>"
+                          "Actual GC: <b>%{customdata[0]}</b> | CS: <b>%{customdata[1]}</b><br>"
+                          "Saves: <b>%{customdata[2]}</b><extra></extra>",
+        ))
+        fig.add_trace(go.Bar(
+            x=tdf_sorted["Team"],
+            y=tdf_sorted["GC"],
+            name="Actual Goals Conceded (GC)",
+            marker_color="#ff4b4b",
+            text=[f"{int(v)}" for v in tdf_sorted["GC"]],
+            textposition="outside",
+            customdata=list(zip(tdf_sorted["xGC"], tdf_sorted["CS"], tdf_sorted["Saves"])),
+            hovertemplate="<b>%{x}</b><br>"
+                          "Actual GC: <b>%{y}</b><br>"
+                          "xGC: <b>%{customdata[0]:.2f}</b> | CS: <b>%{customdata[1]}</b><br>"
+                          "Saves: <b>%{customdata[2]}</b><extra></extra>",
+        ))
+        fig.update_layout(
+            barmode="group",
+            template="plotly_dark",
+            xaxis_title="Team",
+            yaxis_title="Goals Conceded (Lower is better)",
+            height=520,
+            margin=dict(t=30, b=40, l=50, r=30),
+            legend=dict(orientation="h", y=1.06, x=0.01),
+        )
+        st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_def_grouped_chart")
+
+    # Key Takeaways
+    st.markdown("#### 🔍 Defensive Reality Check")
+    c_bailed, c_solid, c_leaky = st.columns(3)
+    top_bailed = tdf.sort_values("Goals_Prevented", ascending=False).head(3)
+    top_solid = tdf.sort_values("xGC", ascending=True).head(3)
+    top_leaky = tdf.sort_values("Goals_Prevented", ascending=True).head(3)
+
+    with c_bailed:
+        st.markdown("**🧤 Top 3 Bailed-Out Defenses (Heroic Keepers):**")
+        for _, r in top_bailed.iterrows():
+            st.markdown(
+                f"- **{r['Team']}** — Prev: `+{r['Goals_Prevented']:.2f}` goals "
+                f"({int(r['CS'])} CS, {int(r['Saves'])} saves)"
+            )
+    with c_solid:
+        st.markdown("**🧱 Top 3 Genuinely Solid Defenses (Lowest xGC):**")
+        for _, r in top_solid.iterrows():
+            st.markdown(
+                f"- **{r['Team']}** — `{r['xGC']:.2f}` xGC conceded "
+                f"({int(r['GC'])} actual GC, {int(r['CS'])} CS)"
+            )
+    with c_leaky:
+        st.markdown("**🚨 Top 3 Punished Defenses (Leaking beyond xGC):**")
+        for _, r in top_leaky.iterrows():
+            st.markdown(
+                f"- **{r['Team']}** — Delta: `{r['Goals_Prevented']:.2f}` "
+                f"({int(r['GC'])} GC from `{r['xGC']:.2f}` xGC)"
+            )
+
+
+def _render_pl_leaderboards(df: pd.DataFrame, key_prefix: str = "lead"):
+    """Tab: Top 15 Player Leaderboards for G, A, G+A, GC, CS, xGI, DC, Total Points, etc."""
+    st.markdown("### 🏆 Premier League Player Leaderboards")
+    st.caption("Official Top 15 leaderboards across key fantasy, attacking, creative, and defensive statistics.")
+
+    metric_configs = {
+        "🌟 Total Points": {"col": "total points", "name": "Total Points", "fmt": "{:,.0f}", "icon": "🌟"},
+        "⚽ Goals (G)": {"col": "G", "name": "Goals", "fmt": "{:,.0f}", "icon": "⚽"},
+        "🅰️ Assists (A)": {"col": "A", "name": "Assists", "fmt": "{:,.0f}", "icon": "🅰️"},
+        "🎯 Goal Involvements (G + A)": {"col": "Actual_GI", "name": "G + A", "fmt": "{:,.0f}", "icon": "🎯"},
+        "🔮 Expected Involvements (xGI)": {"col": "xGI", "name": "xGI", "fmt": "{:.2f}", "icon": "🔮"},
+        "🛡️ Clean Sheets (CS)": {"col": "CS", "name": "Clean Sheets", "fmt": "{:,.0f}", "icon": "🛡️"},
+        "🥊 Goals Conceded (GC)": {"col": "GC", "name": "Goals Conceded", "fmt": "{:,.0f}", "icon": "🥊"},
+        "🧱 Defensive Contrib (DC)": {"col": "DC", "name": "Defensive Contrib", "fmt": "{:,.0f}", "icon": "🧱"},
+        "🎁 Bonus Points": {"col": "Bonus", "name": "Bonus Points", "fmt": "{:,.0f}", "icon": "🎁"},
+        "🧤 Goalkeeper Saves": {"col": "Saves", "name": "Saves", "fmt": "{:,.0f}", "icon": "🧤"},
+    }
+
+    v_col1, v_col2 = st.columns([2.5, 3.5])
+    with v_col1:
+        view_type = st.radio(
+            "Leaderboard Format",
+            options=["🎯 Single Category Deep-Dive", "📊 Multi-Category Matrix Overview"],
+            horizontal=True,
+            key=f"{key_prefix}_view_type",
+        )
+
+    if view_type == "🎯 Single Category Deep-Dive":
+        c_sel, c_pos, c_min, c_pr = st.columns([2.2, 1.4, 1.8, 1.6])
+        with c_sel:
+            selected_metric_label = st.selectbox(
+                "Select Leaderboard Category",
+                options=list(metric_configs.keys()),
+                index=0,
+                key=f"{key_prefix}_metric_choice",
+            )
+        cfg = metric_configs[selected_metric_label]
+        col_name = cfg["col"]
+
+        with c_pos:
+            pos_opts = [p for p in ["FWD", "MID", "DEF", "GK"] if p in df["Position"].unique()]
+            def_default = ["DEF", "GK"] if col_name in ["CS", "Saves"] else pos_opts
+            sel_pos = st.multiselect("Position", options=pos_opts, default=def_default, key=f"{key_prefix}_pos")
+        with c_min:
+            max_mins = int(df["Min"].max()) if not df.empty else 1000
+            min_mins = st.slider("Min Minutes", 0, max_mins, 0, step=45, key=f"{key_prefix}_mins")
+        with c_pr:
+            min_p = float(df["price"].min()) if not df.empty else 4.0
+            max_p = float(df["price"].max()) if not df.empty else 15.0
+            sel_price = st.slider("Max Price (£m)", min_p, max_p, max_p, step=0.1, key=f"{key_prefix}_price")
+
+        fdf = df.copy()
+        if sel_pos:
+            fdf = fdf[fdf["Position"].isin(sel_pos)]
+        fdf = fdf[(fdf["Min"] >= min_mins) & (fdf["price"] <= sel_price)]
+
+        if fdf.empty:
+            st.warning("No players match the current filters.")
+            return
+
+        top15 = fdf.sort_values(by=[col_name, "total points"], ascending=[False, False]).head(15).copy().reset_index(drop=True)
+
+        # Podium highlight cards
+        st.markdown(f"#### {cfg['icon']} Top 3 Podium — {cfg['name']}")
+        p1, p2, p3 = st.columns(3)
+        medals = ["🥇 1st", "🥈 2nd", "🥉 3rd"]
+        for i, col in enumerate([p1, p2, p3]):
+            if i < len(top15):
+                r = top15.iloc[i]
+                val_str = cfg["fmt"].format(r[col_name])
+                with col:
+                    st.markdown(
+                        f"**{medals[i]}: {r['Name']}**\n\n"
+                        f"- **{cfg['name']}: `{val_str}`**\n"
+                        f"- Team: `{r['Team']}` · Pos: `{r['Position']}`\n"
+                        f"- Price: `£{r['price']:.1f}m` | Total Pts: `{int(r['total points'])}`"
+                    )
+
+        st.markdown(f"#### 📋 Top 15 {cfg['name']} Leaderboard")
+
+        if col_name == "total points":
+            display_cols = ["Name", "Team", "Position", "price", "total points", "form", "Min"]
+            tbl_df = top15[display_cols].rename(columns={
+                "Name": "Player",
+                "Position": "Pos",
+                "price": "Price (£m)",
+                "total points": "Total Points",
+                "form": "Form",
+                "Min": "Minutes",
+            })
+            fmt_dict = {
+                "Price (£m)": "£{:.1f}m",
+                "Total Points": "{:,.0f}",
+                "Form": "{:.1f}",
+                "Minutes": "{:,.0f}",
+            }
+        else:
+            display_cols = ["Name", "Team", "Position", "price", col_name, "total points", "form", "Min"]
+            tbl_df = top15[display_cols].rename(columns={
+                "Name": "Player",
+                "Position": "Pos",
+                "price": "Price (£m)",
+                col_name: cfg["name"],
+                "total points": "Total Points",
+                "form": "Form",
+                "Min": "Minutes",
+            })
+            fmt_dict = {
+                "Price (£m)": "£{:.1f}m",
+                cfg["name"]: cfg["fmt"],
+                "Total Points": "{:,.0f}",
+                "Form": "{:.1f}",
+                "Minutes": "{:,.0f}",
+            }
+
+        tbl_df.index = range(1, len(tbl_df) + 1)
+        styled_tbl = tbl_df.style.format(fmt_dict)
+        st.dataframe(styled_tbl, use_container_width=True, height=480)
+
+    else:
+        # Multi-category overview: 4 columns x 2 rows of top-15 summary tables
+        st.markdown("#### 📊 Top 15 Overview Matrix")
+        st.caption("Side-by-side rankings of league leaders across all core metrics.")
+
+        cols_row1 = st.columns(4)
+        quick_categories = [
+            ("🌟 Total Points", "total points", "{:,.0f}", ["FWD", "MID", "DEF", "GK"]),
+            ("⚽ Goals (G)", "G", "{:,.0f}", ["FWD", "MID", "DEF"]),
+            ("🅰️ Assists (A)", "A", "{:,.0f}", ["FWD", "MID", "DEF"]),
+            ("🎯 Goal Involvements", "Actual_GI", "{:,.0f}", ["FWD", "MID", "DEF"]),
+        ]
+
+        for i, (cat_label, c_col, c_fmt, c_positions) in enumerate(quick_categories):
+            with cols_row1[i]:
+                st.markdown(f"**{cat_label}**")
+                sub_df = df[df["Position"].isin(c_positions)].sort_values(by=[c_col, "total points"], ascending=[False, False]).head(15).reset_index(drop=True)
+                out_df = sub_df[["Name", "Team", c_col]].rename(columns={"Name": "Player", c_col: "Val"})
+                out_df.index = range(1, len(out_df) + 1)
+                styled_out = out_df.style.format({"Val": c_fmt})
+                st.dataframe(styled_out, use_container_width=True, height=380)
+
+        st.markdown("---")
+        cols_row2 = st.columns(4)
+        quick_categories_row2 = [
+            ("🔮 Expected Involvements (xGI)", "xGI", "{:.2f}", ["FWD", "MID", "DEF"]),
+            ("🛡️ Clean Sheets (CS)", "CS", "{:,.0f}", ["DEF", "GK"]),
+            ("🧱 Defensive Contrib (DC)", "DC", "{:,.0f}", ["DEF", "MID"]),
+            ("🧤 Goalkeeper Saves", "Saves", "{:,.0f}", ["GK"]),
+        ]
+
+        for i, (cat_label, c_col, c_fmt, c_positions) in enumerate(quick_categories_row2):
+            with cols_row2[i]:
+                st.markdown(f"**{cat_label}**")
+                sub_df = df[df["Position"].isin(c_positions)].sort_values(by=[c_col, "total points"], ascending=[False, False]).head(15).reset_index(drop=True)
+                out_df = sub_df[["Name", "Team", c_col]].rename(columns={"Name": "Player", c_col: "Val"})
+                out_df.index = range(1, len(out_df) + 1)
+                styled_out = out_df.style.format({"Val": c_fmt})
+                st.dataframe(styled_out, use_container_width=True, height=380)
+
+
+def _render_pl_analytics_hub(conn):
+    """Unified master visual hub rendering FPL plots & leaderboards."""
+    df_players = _load_combined_players(conn)
+
+    chart_option = st.radio(
+        "Select Analytics Visualizer",
+        options=[
+            "🎯 1. Player Underlying Stats (xGI vs Return)",
+            "💎 2. Value Matrix (Price vs Points)",
+            "🏟️ 3. Team Finishing & xGI Efficiency (xG vs Goals)",
+            "🌊 4. Transfer Momentum (Bandwagons)",
+            "🏆 5. Player Leaderboards (Top 15 Rankings)",
+            "🛡️ 6. Defensive Luck & Keeper Bailout (xGC vs GC)",
+        ],
+        horizontal=True,
+        key="pl_hub_chart_choice",
+    )
+    st.markdown("---")
+
+    if chart_option.startswith("🎯"):
+        _render_pl_underlying_stats(df_players, key_prefix="hub_p1")
+    elif chart_option.startswith("💎"):
+        _render_pl_value_matrix(df_players, key_prefix="hub_p2")
+    elif chart_option.startswith("🏟️"):
+        _render_pl_team_finishing_efficiency(conn, key_prefix="hub_p3")
+    elif chart_option.startswith("🌊"):
+        _render_pl_transfer_momentum(df_players, key_prefix="hub_p4")
+    elif chart_option.startswith("🏆"):
+        _render_pl_leaderboards(df_players, key_prefix="hub_p5_lead")
+    elif chart_option.startswith("🛡️"):
+        _render_pl_defensive_luck_bailout(conn, key_prefix="hub_p6_def")
+
+
+def _format_analytics_table(df: pd.DataFrame):
+    """Formats numeric columns neatly without awkward decimal places on integers."""
+    int_cols = [c for c in df.columns if c in [
+        "total points", "gw points", "Min", "G", "A", "CS", "GC", "Saves",
+        "Bonus", "bps", "trf in", "trf out", "Starts", "YC", "RC", "CBI",
+        "Recoveries", "Tackles", "DC", "PEN Order", "InFK Order", "FK Order",
+        "Cost Rank", "Form Rank", "Points GW Rank", "Selected Rank",
+        "Influence Rank", "Creativity Rank", "Threat Rank", "ICT Rank",
+        "Goals", "Assists", "Recov", "Total Players", "Avg Score", "Top player points",
+    ] and pd.api.types.is_numeric_dtype(df[c])]
+
+    float_cols = [c for c in df.columns if c not in int_cols and pd.api.types.is_numeric_dtype(df[c])]
+
+    format_dict = {c: "{:,.0f}" for c in int_cols}
+    format_dict.update({c: "{:.2f}" for c in float_cols})
+    return df.style.format(format_dict, na_rep="-")
 
 
 def render_option2_page(fname: str, label: str):
@@ -730,25 +1634,42 @@ def render_option2_page(fname: str, label: str):
         st.error(f"No tables found for `{fname}`. Ensure the file exists in your project directory.")
         return
 
+    is_fpl_analytics = "fpl_analytics" in fname
+    is_fpl_stats = "fpl_stats" in fname
+
     # Generate clean labels for tabs
     raw_sheet_names = [t.replace(f"{prefix}_", "").replace("_", " ") for t in all_tables]
 
     # Custom FPL Tab Color Accents
     fpl_tab_colors = ["🟢", "🟣", "🔵", "🟡", "🔴", "🟠", "⚪", "🟩"]
-    
+
     tab_labels = []
+    if is_fpl_analytics:
+        # Prepend the Visual Analytics Hub and Player Leaderboard tabs
+        tab_labels.append("📈 Visual Analytics Hub")
+        tab_labels.append("🏆 Player Leaderboards")
+
     for idx, name in enumerate(raw_sheet_names):
         icon = fpl_tab_colors[idx % len(fpl_tab_colors)]
         tab_labels.append(f"{icon} {name}")
 
     tabs = st.tabs(tab_labels)
 
-    for idx, tab in enumerate(tabs):
-        table_name = all_tables[idx]
-        with tab:
+    # If fpl_analytics, render Visual Analytics Hub in tab 0 and Leaderboard in tab 1
+    start_offset = 0
+    if is_fpl_analytics:
+        with tabs[0]:
+            _render_pl_analytics_hub(conn)
+        with tabs[1]:
+            df_all = _load_combined_players(conn)
+            _render_pl_leaderboards(df_all, key_prefix="page_tab_lead")
+        start_offset = 2
+
+    for idx, table_name in enumerate(all_tables):
+        current_tab = tabs[idx + start_offset]
+        with current_tab:
             df = pd.read_sql(f"SELECT * FROM `{table_name}`", conn)
-            
-            is_fpl_stats = "fpl_stats" in fname
+
             target_sheets = ["gk", "def", "mid", "fwd", "defense", "attack", "player_ownership"]
             is_target_sheet = any(t in table_name.lower() for t in target_sheets)
 
@@ -763,17 +1684,17 @@ def render_option2_page(fname: str, label: str):
 
                 if change_cols:
                     styled_df = df.style.map(style_ownership, subset=change_cols)
-                    # Format ALL numeric columns to 2 decimal places
                     all_numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
                     if all_numeric_cols:
                         styled_df = styled_df.format("{:.2f}", subset=all_numeric_cols)
                 else:
-                    # No change cols — still format all numerics to 2dp
                     all_numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
                     if all_numeric_cols:
                         styled_df = df.style.format("{:.2f}", subset=all_numeric_cols)
                     else:
                         styled_df = df
+            elif is_fpl_analytics:
+                styled_df = _format_analytics_table(df)
             else:
                 styled_df = df
 
@@ -784,6 +1705,9 @@ def render_option2_page(fname: str, label: str):
 
             elif is_fpl_stats and "player_ownership" in table_name.lower():
                 _render_player_ownership_charts(df, tab_label="Player Ownership")
+
+            elif is_fpl_analytics and "team_stats" in table_name.lower():
+                _render_pl_team_finishing_efficiency(conn, key_prefix=f"sub_{table_name}")
 
             # ── TABLE (below) ─────────────────────────────────────────────
             st.dataframe(styled_df, use_container_width=True, height=450)
